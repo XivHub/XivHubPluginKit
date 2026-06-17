@@ -20,6 +20,16 @@ import sys
 PORT = int(os.environ.get("PORT", "9999"))
 LOGFILE = pathlib.Path(os.environ.get("LOGFILE", pathlib.Path.home() / ".cache" / "zhyra-devlog" / "live.log"))
 LOGFILE.parent.mkdir(parents=True, exist_ok=True)
+# Bound disk use: rotate live.log -> live.log.1 past MAX_BYTES (keeps one old file). Generous default.
+MAX_BYTES = int(os.environ.get("MAX_BYTES", str(25 * 1024 * 1024)))
+
+
+def _rotate_if_needed():
+    try:
+        if LOGFILE.exists() and LOGFILE.stat().st_size >= MAX_BYTES:
+            LOGFILE.replace(LOGFILE.with_suffix(LOGFILE.suffix + ".1"))
+    except OSError:
+        pass
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -28,6 +38,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8", "replace")
         if not body.endswith("\n"):
             body += "\n"
+        _rotate_if_needed()
         with open(LOGFILE, "a", encoding="utf-8") as f:
             f.write(body)
         sys.stdout.write(body)
