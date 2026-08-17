@@ -53,3 +53,31 @@ Point the plugin's dev-log URL at `http://<this-box-LAN-ip>:9999/log`. Read the 
 `tail -f ~/.cache/zhyra-devlog/live.log`.
 
 > Local-network, no auth, plain HTTP. Dev only — do not expose to the internet.
+
+## PluginPresence — cached "is that plugin loaded?"
+
+`DalamudReflector.TryGetDalamudPlugin` with `ignoreCache` walks Dalamud's entire installed-plugin
+list through reflection on every call, so an `Installed` property built on it must never sit in a
+per-frame path. `PluginPresence.IsInstalled(internalName)` memoizes the answer for 2s, which is
+still fast enough to notice a plugin the user loads or unloads mid-session.
+
+```csharp
+public static bool Installed => PluginPresence.IsInstalled("vnavmesh");
+```
+
+## Game/ — automation helpers
+
+Needs ECommons initialised in the consuming plugin. `FlightHelper` also needs
+`KitServices.Init(...)` for the sheet read; the rest are standalone.
+
+| File | What it does |
+| --- | --- |
+| `Game/LineOfSight.cs` | `Clear(target)` — the game's own collision raycast (`BGCollisionModule->RaycastMaterialFilter`) between player and target. Ranged combat and interact checks need this; distance alone is not enough. |
+| `Game/FlightHelper.cs` | `FlyingUnlocked(territoryId)` via the territory's completed `AetherCurrentCompFlgSet`. Unlike `Control.CanFly` it does **not** require being mounted, so it can decide to fly *before* mounting. |
+| `Game/MountHelper.cs` | `Mount()` / `Dismount()` (both General Action 9, Mount Roulette) and `Jump()` (General Action 2, useful to unstick on geometry). |
+| `Game/SprintHelper.cs` | `TrySprint()` — General Action 4, gated on `GetActionStatus == 0`, self-throttled to 2s. |
+
+```xml
+<Compile Include="..\..\ZhyraPluginKit\PluginPresence.cs" Link="Kit\PluginPresence.cs" />
+<Compile Include="..\..\ZhyraPluginKit\Game\LineOfSight.cs" Link="Kit\Game\LineOfSight.cs" />
+```
