@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using FFXIVClientStructs.FFXIV.Client.Game;
 
-namespace ZhyraPluginKit.Inventory;
+namespace XivHubPluginKit.Inventory;
 
 /// <summary>
 /// Frame-spaced executor for player-internal <see cref="MoveOp"/>s (e.g. InventoryCleaner's
@@ -19,7 +19,7 @@ namespace ZhyraPluginKit.Inventory;
 /// behavior exactly.
 ///
 /// Shared across plugins via linked source:
-///   &lt;Compile Include="..\..\ZhyraPluginKit\Inventory\MoveQueue.cs" Link="Kit\Inventory\MoveQueue.cs" /&gt;
+///   &lt;Compile Include="..\..\XivHubPluginKit\Inventory\MoveQueue.cs" Link="Kit\Inventory\MoveQueue.cs" /&gt;
 /// </summary>
 public sealed class MoveQueue
 {

@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using GameInventoryItem = FFXIVClientStructs.FFXIV.Client.Game.InventoryItem;
 
-namespace ZhyraPluginKit.Inventory;
+namespace XivHubPluginKit.Inventory;
 
 /// <summary>
 /// Read-only, generic iteration over live game inventory containers. All methods hit live game
@@ -13,7 +13,7 @@ namespace ZhyraPluginKit.Inventory;
 /// bags) that InventoryCleaner's reader never needed to model.
 ///
 /// Shared across plugins via linked source:
-///   &lt;Compile Include="..\..\ZhyraPluginKit\Inventory\InventoryScan.cs" Link="Kit\Inventory\InventoryScan.cs" /&gt;
+///   &lt;Compile Include="..\..\XivHubPluginKit\Inventory\InventoryScan.cs" Link="Kit\Inventory\InventoryScan.cs" /&gt;
 /// </summary>
 public static unsafe class InventoryScan
 {

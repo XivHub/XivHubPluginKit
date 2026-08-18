@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using ECommons.Reflection;
 
-namespace ZhyraPluginKit;
+namespace XivHubPluginKit;
 
 /// <summary>Cached "is this plugin loaded" lookup.
 /// <para><c>DalamudReflector.TryGetDalamudPlugin</c> with <c>ignoreCache</c> walks Dalamud's whole

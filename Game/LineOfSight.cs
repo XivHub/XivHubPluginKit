@@ -4,7 +4,7 @@ using ECommons.GameHelpers;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 
-namespace ZhyraPluginKit.Game;
+namespace XivHubPluginKit.Game;
 
 /// <summary>Collision raycast between the player and a target, the same check the game uses to decide
 /// whether an action can be fired. A ranged job stops at its attack range, so terrain between it and

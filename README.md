@@ -1,4 +1,4 @@
-# ZhyraPluginKit
+# XivHubPluginKit
 
 Small shared helpers for my Dalamud plugins. Reused by **linked source** (no NuGet, no DLL bundling):
 each plugin compiles the file directly.
@@ -16,7 +16,7 @@ normal users).
 
    ```xml
    <ItemGroup>
-     <Compile Include="..\..\ZhyraPluginKit\DevTelemetry.cs" Link="Dev\DevTelemetry.cs" />
+     <Compile Include="..\..\XivHubPluginKit\DevTelemetry.cs" Link="Dev\DevTelemetry.cs" />
    </ItemGroup>
    ```
 
@@ -25,7 +25,7 @@ normal users).
 3. Wire it up (in your `Plugin`):
 
    ```csharp
-   using ZhyraPluginKit;
+   using XivHubPluginKit;
    public static DevTelemetry Telemetry { get; private set; } = null!;
 
    // ctor, after config load:
@@ -45,7 +45,7 @@ normal users).
 ### Run the server (on this box)
 
 ```bash
-python3 ~/dev/ZhyraPluginKit/devlog_server.py
+python3 ~/dev/XivHubPluginKit/devlog_server.py
 # listens on 0.0.0.0:9999, appends to ~/.cache/zhyra-devlog/live.log, echoes to stdout
 ```
 
@@ -78,6 +78,6 @@ Needs ECommons initialised in the consuming plugin. `FlightHelper` also needs
 | `Game/SprintHelper.cs` | `TrySprint()` — General Action 4, gated on `GetActionStatus == 0`, self-throttled to 2s. |
 
 ```xml
-<Compile Include="..\..\ZhyraPluginKit\PluginPresence.cs" Link="Kit\PluginPresence.cs" />
-<Compile Include="..\..\ZhyraPluginKit\Game\LineOfSight.cs" Link="Kit\Game\LineOfSight.cs" />
+<Compile Include="..\..\XivHubPluginKit\PluginPresence.cs" Link="Kit\PluginPresence.cs" />
+<Compile Include="..\..\XivHubPluginKit\Game\LineOfSight.cs" Link="Kit\Game\LineOfSight.cs" />
 ```

@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 
-namespace ZhyraPluginKit;
+namespace XivHubPluginKit;
 
 /// <summary>
 /// Plugin-agnostic live-log / telemetry uploader for local dev. Buffers lines and POSTs them to a
@@ -12,7 +12,7 @@ namespace ZhyraPluginKit;
 /// non-empty, so it is safe to ship in Release builds (dormant for normal users).
 ///
 /// Shared across plugins via linked source:
-///   &lt;Compile Include="..\..\ZhyraPluginKit\DevTelemetry.cs" Link="Dev\DevTelemetry.cs" /&gt;
+///   &lt;Compile Include="..\..\XivHubPluginKit\DevTelemetry.cs" Link="Dev\DevTelemetry.cs" /&gt;
 ///
 /// Usage:
 ///   Telemetry = new DevTelemetry("MyPlugin", () =&gt; C.DevLog, () =&gt; C.DevLogUrl);

@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using FFXIVClientStructs.FFXIV.Client.Game;
 
-namespace ZhyraPluginKit.Inventory;
+namespace XivHubPluginKit.Inventory;
 
 /// <summary>
 /// A single generic player-internal move unit consumed by the kit <see cref="MoveQueue"/>
@@ -9,7 +9,7 @@ namespace ZhyraPluginKit.Inventory;
 /// game command instead of <c>MoveItemSlot</c> (e.g. retainer withdrawal).
 ///
 /// Shared across plugins via linked source:
-///   &lt;Compile Include="..\..\ZhyraPluginKit\Inventory\MoveOp.cs" Link="Kit\Inventory\MoveOp.cs" /&gt;
+///   &lt;Compile Include="..\..\XivHubPluginKit\Inventory\MoveOp.cs" Link="Kit\Inventory\MoveOp.cs" /&gt;
 /// </summary>
 public readonly record struct MoveOp(
     InventoryType SrcType,

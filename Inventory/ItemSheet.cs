@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
 
-namespace ZhyraPluginKit.Inventory;
+namespace XivHubPluginKit.Inventory;
 
 /// <summary>
 /// Thin cached wrappers over the Lumina <see cref="Item"/> sheet, backed by
@@ -11,7 +11,7 @@ namespace ZhyraPluginKit.Inventory;
 /// and stay local to each consuming plugin.
 ///
 /// Shared across plugins via linked source:
-///   &lt;Compile Include="..\..\ZhyraPluginKit\Inventory\ItemSheet.cs" Link="Kit\Inventory\ItemSheet.cs" /&gt;
+///   &lt;Compile Include="..\..\XivHubPluginKit\Inventory\ItemSheet.cs" Link="Kit\Inventory\ItemSheet.cs" /&gt;
 /// </summary>
 public static class ItemSheet
 {

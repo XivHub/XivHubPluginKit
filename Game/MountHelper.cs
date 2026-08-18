@@ -1,7 +1,7 @@
 using ECommons.GameHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game;
 
-namespace ZhyraPluginKit.Game;
+namespace XivHubPluginKit.Game;
 
 /// <summary>Mount/dismount via the Mount Roulette general action (id 9), as ICE does.
 /// Jump (GeneralAction 2) is used by the anti-stuck watchdog to unstick on geometry.</summary>

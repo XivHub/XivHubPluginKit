@@ -1,6 +1,6 @@
 using Dalamud.Plugin.Services;
 
-namespace ZhyraPluginKit;
+namespace XivHubPluginKit;
 
 /// <summary>
 /// Static service holder for kit linked-source. Kit code (<c>Inventory/*</c>, etc.) references
@@ -9,7 +9,7 @@ namespace ZhyraPluginKit;
 /// in each consuming plugin's constructor, before any other kit code runs.
 ///
 /// Shared across plugins via linked source:
-///   &lt;Compile Include="..\..\ZhyraPluginKit\KitServices.cs" Link="Kit\KitServices.cs" /&gt;
+///   &lt;Compile Include="..\..\XivHubPluginKit\KitServices.cs" Link="Kit\KitServices.cs" /&gt;
 /// </summary>
 public static class KitServices
 {

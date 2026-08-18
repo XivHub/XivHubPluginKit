@@ -1,7 +1,7 @@
 using ECommons.Throttlers;
 using FFXIVClientStructs.FFXIV.Client.Game;
 
-namespace ZhyraPluginKit.Game;
+namespace XivHubPluginKit.Game;
 
 /// <summary>Use Sprint (GeneralAction 4) on long grounded walks, the way ICE does. Only fires
 /// when the action is off cooldown (<see cref="ActionManager.GetActionStatus"/> == 0) and the

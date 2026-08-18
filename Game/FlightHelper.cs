@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using Lumina.Excel.Sheets;
 
-namespace ZhyraPluginKit.Game;
+namespace XivHubPluginKit.Game;
 
 /// <summary>Determines whether flight is unlocked in a zone, the way Questionable does it:
 /// the territory's AetherCurrentCompFlgSet completed in PlayerState. Unlike Control.CanFly this

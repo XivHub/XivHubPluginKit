@@ -1,6 +1,6 @@
 using FFXIVClientStructs.FFXIV.Client.Game;
 
-namespace ZhyraPluginKit.Inventory;
+namespace XivHubPluginKit.Inventory;
 
 /// <summary>
 /// Lightweight managed view of a single non-empty inventory slot, produced by
@@ -9,7 +9,7 @@ namespace ZhyraPluginKit.Inventory;
 /// <see cref="Qty"/> since <see cref="InventoryScan.ScanContainer"/> also covers stackable items.
 ///
 /// Shared across plugins via linked source:
-///   &lt;Compile Include="..\..\ZhyraPluginKit\Inventory\SlotView.cs" Link="Kit\Inventory\SlotView.cs" /&gt;
+///   &lt;Compile Include="..\..\XivHubPluginKit\Inventory\SlotView.cs" Link="Kit\Inventory\SlotView.cs" /&gt;
 /// </summary>
 public sealed class SlotView
 {
