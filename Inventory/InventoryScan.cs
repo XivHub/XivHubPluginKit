@@ -55,6 +55,31 @@ public static unsafe class InventoryScan
         return null;
     }
 
+    /// <summary>
+    /// Occupied and total slot counts for <paramref name="type"/>. Returns (0, 0) when the container
+    /// is missing or not loaded, which callers should treat as "no occupancy information" rather than
+    /// "empty".
+    /// </summary>
+    public static (int Used, int Size) ContainerUsage(InventoryType type)
+    {
+        var mgr = InventoryManager.Instance();
+        if (mgr == null)
+            return (0, 0);
+        var container = mgr->GetInventoryContainer(type);
+        if (container == null)
+            return (0, 0);
+
+        var size = (int)container->Size;
+        var used = 0;
+        for (var i = 0; i < size; i++)
+        {
+            if ((container->Items + i)->ItemId != 0)
+                used++;
+        }
+
+        return (used, size);
+    }
+
     /// <summary>Returns the first free slot in <paramref name="type"/>, or null if full/missing.</summary>
     public static (InventoryType Type, int Slot)? FindFreeSlotIn(InventoryType type)
     {
