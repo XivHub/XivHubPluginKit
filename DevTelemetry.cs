@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -34,6 +35,16 @@ public sealed class DevTelemetry : IDisposable
     private readonly Timer timer;
     private long lastSnapshotTick;
 
+    // Lines drained from the queue but not yet accepted by the server. Held so a
+    // failed POST costs nothing: the batch goes out again on the next attempt,
+    // in order. Guarded by flushGate.
+    private readonly List<string> pending = new();
+    private readonly object flushGate = new();
+    private long backoffUntilTick;
+
+    private const int MaxBufferedLines = 5000;
+    private const int FailureBackoffMs = 30_000;
+
     public DevTelemetry(string source, Func<bool> enabled, Func<string?> url, Action<string>? onError = null)
     {
         this.source = source;
@@ -52,7 +63,8 @@ public sealed class DevTelemetry : IDisposable
     {
         if (!Active) return;
         queue.Enqueue($"{DateTime.Now:HH:mm:ss.fff} [{source}] {line}");
-        while (queue.Count > 5000 && queue.TryDequeue(out _)) { } // bound memory if the server is down
+        // Bound memory while the server is down; oldest lines go first.
+        while (queue.Count > MaxBufferedLines && queue.TryDequeue(out _)) { }
     }
 
     /// <summary>Call every frame; invokes <paramref name="build"/> and queues the result at most once
@@ -66,27 +78,51 @@ public sealed class DevTelemetry : IDisposable
         try { Log(build()); } catch { /* never let telemetry break the loop */ }
     }
 
-    private void Flush()
+    /// <param name="force">Ignore the post-failure backoff. Used on dispose, where
+    /// this is the last chance to deliver whatever is buffered.</param>
+    private void Flush(bool force = false)
     {
-        if (!Active || queue.IsEmpty) return;
-        var sb = new StringBuilder();
-        while (queue.TryDequeue(out var l)) sb.Append(l).Append('\n');
-        if (sb.Length == 0) return;
+        if (!Active) return;
+        if (!force && Environment.TickCount64 < Volatile.Read(ref backoffUntilTick)) return;
+        // The timer fires on a pool thread and a POST can outlive its period, so
+        // two flushes can overlap. Skipping the second keeps the batch in order.
+        if (!Monitor.TryEnter(flushGate)) return;
         try
         {
-            using var content = new StringContent(sb.ToString(), Encoding.UTF8, "text/plain");
-            using var resp = http.PostAsync(url(), content).GetAwaiter().GetResult();
+            while (queue.TryDequeue(out var l)) pending.Add(l);
+            if (pending.Count == 0) return;
+            int excess = pending.Count - MaxBufferedLines;
+            if (excess > 0) pending.RemoveRange(0, excess);
+
+            var sb = new StringBuilder();
+            foreach (var l in pending) sb.Append(l).Append('\n');
+            try
+            {
+                using var content = new StringContent(sb.ToString(), Encoding.UTF8, "text/plain");
+                using var resp = http.PostAsync(url(), content).GetAwaiter().GetResult();
+                resp.EnsureSuccessStatusCode();
+                pending.Clear();
+            }
+            catch (Exception e)
+            {
+                // Keep the batch for the next attempt, and stop retrying every
+                // second: the lines that explain why the sink went down are the
+                // ones least worth dropping, and a dead endpoint costs a 3s
+                // timeout per attempt.
+                Volatile.Write(ref backoffUntilTick, Environment.TickCount64 + FailureBackoffMs);
+                onError?.Invoke(e.Message);
+            }
         }
-        catch (Exception e)
+        finally
         {
-            onError?.Invoke(e.Message);
+            Monitor.Exit(flushGate);
         }
     }
 
     public void Dispose()
     {
         timer.Dispose();
-        Flush();
+        Flush(force: true);
         http.Dispose();
     }
 }
