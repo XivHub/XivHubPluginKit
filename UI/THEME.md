@@ -81,7 +81,6 @@ Leave these alone, locally defined, in the plugin:
   a different job from the theme's four roles.
 - BlackjackAdvisor's `Felt`, `FeltRim`, `CardFace`, `SuitRed`, `SuitBlack` — a
   card table, deliberately not the app chrome. A gold felt would be worse.
-- SealHunter's job and rank colours.
 
 Replace these, they are chrome wearing a local name:
 
@@ -93,6 +92,13 @@ Replace these, they are chrome wearing a local name:
   porting mostly means deleting the constant.
 - `Good` / `Green`, `Warn` / `Amber`, `Danger` / `Red`, `Blue`, `Dim` / `Muted`
   / `Default` → `HubStyle.Good` / `Warn` / `Bad` / `Info` / `Faint`.
+
+Test for which side a colour is on: would two of them ever need to be told
+apart *at the same time*? A five-way legend must stay distinguishable, so it is
+domain. A single "this failed" red never competes with anything, so it is
+semantic and belongs to the theme. Most plugins turn out to have no domain
+colour at all — SealHunter has none, and every colour in it was chrome or one of
+the four roles.
 
 If a domain palette has to sit next to the chrome, derive it so it does not
 compete with gold: keep the category hues away from 30–50°, and match their

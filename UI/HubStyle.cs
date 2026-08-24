@@ -235,7 +235,18 @@ public static class HubStyle
     /// <c>using (HubStyle.Primary()) if (ImGui.Button("Confirm")) …</c>.
     /// A window with two of these has a hierarchy problem, not a theme problem.
     /// </summary>
-    public static IDisposable Primary() => new PrimaryScope();
+    /// <para>
+    /// A no-op when the theme is switched off: "off" has to mean every window is
+    /// untouched, and a scope that dressed one button anyway would leave a single
+    /// themed control in an otherwise default window.
+    /// </para>
+    public static IDisposable Primary() => Enabled ? new PrimaryScope() : NullScope.Instance;
+
+    private sealed class NullScope : IDisposable
+    {
+        public static readonly NullScope Instance = new();
+        public void Dispose() { }
+    }
 
     private sealed class PrimaryScope : IDisposable
     {
