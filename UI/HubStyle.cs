@@ -267,6 +267,21 @@ public static class HubStyle
         }
     }
 
+    /// <summary>
+    /// The surface ramp, for the places a call site genuinely has to paint one
+    /// itself: a draw-list fill, a per-widget selected state, a recessed cell.
+    /// Named members rather than <see cref="HubColors.Get(string)"/> at the call
+    /// site — a mistyped colour name is magenta at runtime, where this is a
+    /// compile error.
+    /// </summary>
+    public static Vector4 Ground => HubColors.Get("HubGround");
+    public static Vector4 WindowBg => HubColors.Get("HubWindowBg");
+    public static Vector4 ChildBg => HubColors.Get("HubChildBg");
+    public static Vector4 FrameBg => HubColors.Get("HubFrameBg");
+    public static Vector4 Surface => HubColors.Get("HubSurface");
+    public static Vector4 Hovered => HubColors.Get("HubHovered");
+    public static Vector4 Selected => HubColors.Get("HubActive");
+
     public static Vector4 Text => HubColors.Get("HubText");
     public static Vector4 Muted => HubColors.Get("HubMuted");
     public static Vector4 Faint => HubColors.Get("HubFaint");

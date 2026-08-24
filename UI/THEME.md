@@ -84,8 +84,10 @@ Leave these alone, locally defined, in the plugin:
 
 Replace these, they are chrome wearing a local name:
 
-- `Panel`, `SlotBg`, `Track`, `Rule`, `SlotBorder` → the surface ramp and
-  `color.border`.
+- `Panel`, `SlotBg`, `Track`, `Rule`, `SlotBorder` → the surface ramp
+  (`HubStyle.Surface` / `FrameBg` / `ChildBg` / `Ground`) and `color.border`.
+  Use those named members, never `HubColors.Get("…")` at a call site: a mistyped
+  name renders magenta at runtime instead of failing to compile.
 - `Accent`, `AccentColor`, `Brass` → `HubStyle.Accent`. All three are already
   `(0.851, 0.741, 0.420)` in three different plugins, which is within a hair of
   `HubGold` — the family converged on this accent before the theme existed, so
@@ -103,6 +105,21 @@ the four roles.
 If a domain palette has to sit next to the chrome, derive it so it does not
 compete with gold: keep the category hues away from 30–50°, and match their
 chroma to each other rather than to the accent.
+
+## What "theme off" means
+
+`Enabled = false` means **the chrome is untouched**, not that the plugin loses
+its colours. The two halves behave differently on purpose:
+
+- Anything that PUSHES ImGui style — `Push`/`Pop` and the `Primary()` scope —
+  becomes a no-op, so every window falls back to the user's own Dalamud style.
+- The semantic and ramp VALUES — `Accent`, `Good`, `Warn`, `Bad`, `Info`,
+  `Faint`, `Surface` and friends — keep returning hub colours, because they are
+  content rather than chrome. A "this failed" red is the plugin's own choice of
+  colour; there is nothing to fall back to, and blanking it would lose meaning.
+
+So a plugin with the theme off still shows a red failure line, but its buttons,
+tabs and frames look like every other Dalamud plugin. That is the intent.
 
 ## What the wrap point cannot reach
 
