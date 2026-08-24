@@ -104,6 +104,23 @@ If a domain palette has to sit next to the chrome, derive it so it does not
 compete with gold: keep the category hues away from 30–50°, and match their
 chroma to each other rather than to the accent.
 
+## What the wrap point cannot reach
+
+`Push`/`Pop` dresses one plugin's own `UiBuilder.Draw`. Three things fall outside
+it, by construction rather than by oversight:
+
+- **Widgets drawn inside another plugin's window.** AutoPincher contributes a
+  button to AutoRetainer's retainer-list overlay through
+  `AutoRetainer.OnMainControlsDraw`. That draws inside AutoRetainer's frame, so
+  the theme never wraps it — and theming it anyway would plant one gold-on-dark
+  control in a window that is not ours. Leave those on the host's style.
+- **Dalamud's own chrome.** Toast notifications (`NotificationType`), the DTR bar
+  entry and the plugin installer entry are drawn by Dalamud outside every
+  plugin's draw hook.
+- **Anything the game renders.** Item icons, rarity colours off the Excel sheets,
+  and job glyphs are game-authored art. Tinting them to match is not theming, it
+  is defacing them.
+
 ## Extending it
 
 When the theme lacks something you need, in order of preference:
