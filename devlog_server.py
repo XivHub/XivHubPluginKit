@@ -9,6 +9,7 @@ real time. Binds the LAN so the game client on another machine can reach it.
   PORT=9000 LOGFILE=/tmp/x.log python3 devlog_server.py
 
 Point the plugin's dev-log URL at  http://<this-box-LAN-ip>:<port>/log
+Read it back in a browser at the same address (?n=200 for the last 200 lines).
 NOT for public exposure — no auth, plain HTTP, local network only.
 """
 import http.server
@@ -16,6 +17,7 @@ import os
 import pathlib
 import socketserver
 import sys
+import urllib.parse
 
 PORT = int(os.environ.get("PORT", "9999"))
 LOGFILE = pathlib.Path(os.environ.get("LOGFILE", pathlib.Path.home() / ".cache" / "zhyra-devlog" / "live.log"))
@@ -47,9 +49,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        self.send_response(200)
+        """Serve the tail of the log, so it can be read from a browser.
+
+        Only the POST side of this server was ever implemented, so every GET
+        answered "ok" and the log was readable only by opening the file on the
+        box it lands on. `?n=` sets how many lines (default 500, 0 = all).
+        """
+        path, _, query = self.path.partition("?")
+        if path.rstrip("/") == "/health":
+            self._text(200, "zhyra-devlog ok\n")
+            return
+
+        params = urllib.parse.parse_qs(query)
+        try:
+            n = int(params.get("n", ["500"])[0])
+        except ValueError:
+            n = 500
+
+        try:
+            with open(LOGFILE, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            self._text(200, "(no log yet)\n")
+            return
+        self._text(200, "".join(lines[-n:] if n > 0 else lines))
+
+    def _text(self, code, body):
+        payload = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(b"zhyra-devlog ok\n")
+        self.wfile.write(payload)
 
     def log_message(self, *args):
         pass  # quiet; we print the payloads, not the access log
