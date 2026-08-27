@@ -47,6 +47,21 @@ public static class ItemSheet
         return name;
     }
 
+    /// <summary>
+    /// Whether a retainer can put this item on the market board.
+    ///
+    /// The game's rule is <see cref="Item.ItemSearchCategory"/>: row 0 means the item has no
+    /// market-board category and its tooltip reads "Market Prohibited". That is strictly
+    /// narrower than tradability — 523 items, among them every chocobo stable and the
+    /// Firmament paintings, can be handed to another player but never listed. No item with a
+    /// search category is untradable, so this single test answers both questions.
+    /// </summary>
+    public static bool IsMarketable(uint itemId)
+    {
+        var row = ById(itemId);
+        return row.HasValue && row.Value.ItemSearchCategory.RowId != 0;
+    }
+
     /// <summary>Item level (<see cref="Item.LevelItem"/> RowId); 0 if not found.</summary>
     public static ushort Ilvl(uint itemId)
     {
