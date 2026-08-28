@@ -62,6 +62,17 @@ public static class ItemSheet
         return row.HasValue && row.Value.ItemSearchCategory.RowId != 0;
     }
 
+    /// <summary>
+    /// How many units fit in one inventory or market-board slot
+    /// (<see cref="Item.StackSize"/>); 1 if not found, which is also the answer
+    /// for everything that does not stack.
+    /// </summary>
+    public static int StackSize(uint itemId)
+    {
+        var row = ById(itemId);
+        return row.HasValue && row.Value.StackSize > 0 ? (int)row.Value.StackSize : 1;
+    }
+
     /// <summary>Item level (<see cref="Item.LevelItem"/> RowId); 0 if not found.</summary>
     public static ushort Ilvl(uint itemId)
     {
