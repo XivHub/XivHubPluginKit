@@ -12,9 +12,11 @@ Point the plugin's dev-log URL at  http://<this-box-LAN-ip>:<port>/log
 Read it back in a browser at the same address (?n=200 for the last 200 lines).
 NOT for public exposure — no auth, plain HTTP, local network only.
 """
+import datetime
 import http.server
 import os
 import pathlib
+import re
 import socketserver
 import sys
 import urllib.parse
@@ -24,6 +26,10 @@ LOGFILE = pathlib.Path(os.environ.get("LOGFILE", pathlib.Path.home() / ".cache" 
 LOGFILE.parent.mkdir(parents=True, exist_ok=True)
 # Bound disk use: rotate live.log -> live.log.1 past MAX_BYTES (keeps one old file). Generous default.
 MAX_BYTES = int(os.environ.get("MAX_BYTES", str(25 * 1024 * 1024)))
+# Whole artefacts (addon dumps, captures) land here as discrete files rather than as log lines, so
+# one dump stays one readable unit instead of interleaving with whatever else is logging.
+DUMPDIR = pathlib.Path(os.environ.get("DUMPDIR", LOGFILE.parent / "dumps"))
+MAX_DUMP_BYTES = int(os.environ.get("MAX_DUMP_BYTES", str(8 * 1024 * 1024)))
 
 
 def _rotate_if_needed():
@@ -34,8 +40,21 @@ def _rotate_if_needed():
         pass
 
 
+def _safe_stem(name):
+    """Reduce a caller-supplied name to a single harmless filename stem.
+
+    The name arrives over an unauthenticated LAN socket and is used to build a path, so anything
+    outside this character class is dropped rather than escaped.
+    """
+    stem = re.sub(r"[^A-Za-z0-9._-]", "-", name or "").strip("-.") [:80]
+    return stem or "dump"
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
+        path, _, query = self.path.partition("?")
+        if path.rstrip("/") == "/file":
+            return self._save_file(query)
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8", "replace")
         if not body.endswith("\n"):
@@ -47,6 +66,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sys.stdout.flush()
         self.send_response(204)
         self.end_headers()
+
+    def _save_file(self, query):
+        """Store one POSTed artefact under DUMPDIR and answer with the path it landed at."""
+        length = int(self.headers.get("Content-Length", 0))
+        if length > MAX_DUMP_BYTES:
+            return self._text(413, f"too large: {length} > {MAX_DUMP_BYTES}\n")
+        body = self.rfile.read(length)
+        params = urllib.parse.parse_qs(query)
+        stem = _safe_stem(params.get("name", [""])[0])
+        ext = _safe_stem(params.get("ext", ["txt"])[0]) or "txt"
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        DUMPDIR.mkdir(parents=True, exist_ok=True)
+        target = DUMPDIR / f"{stamp}-{stem}.{ext}"
+        target.write_bytes(body)
+        line = f"[devlog] saved {target} ({len(body)} bytes)\n"
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        self._text(200, str(target) + "\n")
 
     def do_GET(self):
         """Serve the tail of the log, so it can be read from a browser.

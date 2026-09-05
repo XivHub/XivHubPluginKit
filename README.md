@@ -52,6 +52,24 @@ python3 ~/dev/XivHubPluginKit/devlog_server.py
 Point the plugin's dev-log URL at `http://<this-box-LAN-ip>:9999/log`. Read the stream with
 `tail -f ~/.cache/zhyra-devlog/live.log`.
 
+### Whole artefacts: `POST /file`
+
+A stream of log lines is the wrong shape for a one-off capture — an addon's `AtkValues`, a memory
+dump, a struct decode. Those interleave with everything else logging and have to be sliced back out
+by hand. `POST /file` stores one instead:
+
+```bash
+curl -X POST --data-binary @dump.txt "http://<box>:9999/file?name=selectstring&ext=txt"
+# -> /home/edgar/.cache/zhyra-devlog/dumps/20260905-123312-selectstring.txt
+```
+
+The response body is the path it landed at. `name` and `ext` are reduced to `[A-Za-z0-9._-]`, so a
+caller cannot escape the dump directory; the stamped prefix keeps repeat captures of the same thing
+side by side instead of overwriting. Capped at `MAX_DUMP_BYTES` (8 MB), overridable, as is `DUMPDIR`.
+
+Reading an addon through Dalamud's inspector means retyping from screenshots, which is why this
+exists: a plugin builds the report and ships it here, and it is a file on the dev box.
+
 > Local-network, no auth, plain HTTP. Dev only — do not expose to the internet.
 
 ## PluginPresence — cached "is that plugin loaded?"
