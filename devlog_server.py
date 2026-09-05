@@ -77,8 +77,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         stem = _safe_stem(params.get("name", [""])[0])
         ext = _safe_stem(params.get("ext", ["txt"])[0]) or "txt"
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        # Several plugins share this server, exactly as they share live.log, where DevTelemetry
+        # tags every line with its source. Carry the same attribution into the filename.
+        plugin = params.get("plugin", [""])[0]
+        prefix = f"{stamp}-{_safe_stem(plugin)}" if plugin else stamp
         DUMPDIR.mkdir(parents=True, exist_ok=True)
-        target = DUMPDIR / f"{stamp}-{stem}.{ext}"
+        target = DUMPDIR / f"{prefix}-{stem}.{ext}"
         target.write_bytes(body)
         line = f"[devlog] saved {target} ({len(body)} bytes)\n"
         sys.stdout.write(line)

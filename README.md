@@ -59,13 +59,16 @@ dump, a struct decode. Those interleave with everything else logging and have to
 by hand. `POST /file` stores one instead:
 
 ```bash
-curl -X POST --data-binary @dump.txt "http://<box>:9999/file?name=selectstring&ext=txt"
-# -> /home/edgar/.cache/zhyra-devlog/dumps/20260905-123312-selectstring.txt
+curl -X POST --data-binary @dump.txt \
+  "http://<box>:9999/file?plugin=Gardener&name=selectstring&ext=txt"
+# -> /home/edgar/.cache/zhyra-devlog/dumps/20260905-123312-Gardener-selectstring.txt
 ```
 
-The response body is the path it landed at. `name` and `ext` are reduced to `[A-Za-z0-9._-]`, so a
-caller cannot escape the dump directory; the stamped prefix keeps repeat captures of the same thing
-side by side instead of overwriting. Capped at `MAX_DUMP_BYTES` (8 MB), overridable, as is `DUMPDIR`.
+The response body is the path it landed at. Pass `plugin` so artefacts are attributable the way log
+lines already are — `DevTelemetry` tags every line with its source, and several plugins share this
+server. `plugin`, `name` and `ext` are reduced to `[A-Za-z0-9._-]`, so a caller cannot escape the
+dump directory; the stamped prefix keeps repeat captures of the same thing side by side instead of
+overwriting. Capped at `MAX_DUMP_BYTES` (8 MB), overridable, as is `DUMPDIR`.
 
 Reading an addon through Dalamud's inspector means retyping from screenshots, which is why this
 exists: a plugin builds the report and ships it here, and it is a file on the dev box.
