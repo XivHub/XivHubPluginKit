@@ -17,6 +17,7 @@ import http.server
 import os
 import pathlib
 import re
+import socket
 import socketserver
 import sys
 import urllib.parse
@@ -40,6 +41,26 @@ def _rotate_if_needed():
         pass
 
 
+_client_names = {}
+
+
+def _client_label(addr, override=None):
+    """A short, stable name for whoever sent this, so two machines sharing the log stay apart.
+
+    An explicit label wins; otherwise reverse DNS once per address, falling back to the address
+    itself. Cached because a POST arrives every second and a failing lookup is slow.
+    """
+    if override:
+        return _safe_stem(override)
+    if addr not in _client_names:
+        try:
+            name = socket.gethostbyaddr(addr)[0].split(".")[0]
+        except OSError:
+            name = addr
+        _client_names[addr] = _safe_stem(name)
+    return _client_names[addr]
+
+
 def _safe_stem(name):
     """Reduce a caller-supplied name to a single harmless filename stem.
 
@@ -57,8 +78,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._save_file(query)
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8", "replace")
-        if not body.endswith("\n"):
-            body += "\n"
+        params = urllib.parse.parse_qs(query)
+        client = _client_label(self.client_address[0], params.get("client", [""])[0])
+        # Every line carries its sender: several machines share one log, and a line that cannot be
+        # attributed is worse than no line when two people are reproducing the same bug.
+        body = "".join(f"{client} {line}\n" for line in body.splitlines())
         _rotate_if_needed()
         with open(LOGFILE, "a", encoding="utf-8") as f:
             f.write(body)
@@ -80,7 +104,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Several plugins share this server, exactly as they share live.log, where DevTelemetry
         # tags every line with its source. Carry the same attribution into the filename.
         plugin = params.get("plugin", [""])[0]
-        prefix = f"{stamp}-{_safe_stem(plugin)}" if plugin else stamp
+        client = _client_label(self.client_address[0], params.get("client", [""])[0])
+        prefix = "-".join(x for x in (stamp, client, _safe_stem(plugin) if plugin else "") if x)
         DUMPDIR.mkdir(parents=True, exist_ok=True)
         target = DUMPDIR / f"{prefix}-{stem}.{ext}"
         target.write_bytes(body)

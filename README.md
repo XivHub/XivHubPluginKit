@@ -52,6 +52,21 @@ python3 ~/dev/XivHubPluginKit/devlog_server.py
 Point the plugin's dev-log URL at `http://<this-box-LAN-ip>:9999/log`. Read the stream with
 `tail -f ~/.cache/zhyra-devlog/live.log`.
 
+### Several machines, one log
+
+Every line is prefixed with whoever sent it, so two people on the same LAN can point at the same
+server and stay apart:
+
+```
+192.168.88.248 12:00:00.000 [Gardener] tended bed 1
+gf-pc          12:00:01.000 [Gardener] tended bed 2
+```
+
+The name is the sender's hostname by reverse DNS, cached per address, falling back to the address
+itself. Add `?client=<name>` to the URL to label a machine explicitly, which also names its uploaded
+artefacts (`20260905-191310-gf-pc-Gardener-dump.txt`). Grep one machine out with
+`grep '^gf-pc ' live.log`.
+
 ### Whole artefacts: `POST /file`
 
 A stream of log lines is the wrong shape for a one-off capture — an addon's `AtkValues`, a memory
