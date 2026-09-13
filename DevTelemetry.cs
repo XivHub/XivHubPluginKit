@@ -38,6 +38,9 @@ public sealed class DevTelemetry : IDisposable
     // via CancellationToken instead (3 s for log posts, 60 s for file uploads).
     private readonly HttpClient http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly Timer timer;
+    // Cancelled by Dispose, so an upload still in flight ends as a cancellation instead of racing
+    // the HttpClient being disposed underneath it. Never disposed itself: it owns no timer or handle.
+    private readonly CancellationTokenSource disposing = new();
     private long lastSnapshotTick;
 
     // Lines drained from the queue but not yet accepted by the server. Held so a
@@ -89,14 +92,19 @@ public sealed class DevTelemetry : IDisposable
     /// <c>enabled()</c>: it is only ever called from an explicit user action (e.g. "save and
     /// upload"), not from the per-frame log path, so there is nothing to gate.</summary>
     /// <returns>The server-side path the artefact landed at.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="ct"/> fired, 60 s passed, or this
+    /// instance was disposed mid-upload.</exception>
+    /// <exception cref="HttpRequestException">The server refused the artefact (e.g. <c>413</c> over
+    /// its <c>MAX_DUMP_BYTES</c>) or could not be reached.</exception>
     public async Task<string> UploadFileAsync(string name, string ext, byte[] body, CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(disposing.IsCancellationRequested, this);
         var logUrl = url();
         if (string.IsNullOrWhiteSpace(logUrl)) throw new InvalidOperationException("no devlog URL configured");
 
         using var content = new ByteArrayContent(body);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, disposing.Token);
         cts.CancelAfter(TimeSpan.FromSeconds(60));
         using var resp = await http.PostAsync(FileUrl(logUrl!, source, name, ext), content, cts.Token).ConfigureAwait(false);
         var respBody = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
@@ -163,6 +171,7 @@ public sealed class DevTelemetry : IDisposable
     {
         timer.Dispose();
         Flush(force: true);
+        disposing.Cancel();
         http.Dispose();
     }
 }
