@@ -95,6 +95,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """Store one POSTed artefact under DUMPDIR and answer with the path it landed at."""
         length = int(self.headers.get("Content-Length", 0))
         if length > MAX_DUMP_BYTES:
+            # Drain the body before answering. Replying with it unread makes the kernel reset the
+            # connection while the client is still sending, and the client then sees a transport
+            # error instead of this 413.
+            remaining = length
+            while remaining > 0:
+                chunk = self.rfile.read(min(remaining, 1 << 16))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
             return self._text(413, f"too large: {length} > {MAX_DUMP_BYTES}\n")
         body = self.rfile.read(length)
         params = urllib.parse.parse_qs(query)
