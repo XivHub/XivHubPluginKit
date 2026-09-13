@@ -90,6 +90,22 @@ exists: a plugin builds the report and ships it here, and it is a file on the de
 
 > Local-network, no auth, plain HTTP. Dev only — do not expose to the internet.
 
+### From a plugin
+
+`DevTelemetry.UploadFileAsync` posts to `/file` without going through the curl round trip:
+
+```csharp
+var path = await Telemetry.UploadFileAsync("capture", "json", bytes);
+```
+
+- The URL is derived from the configured `/log` URL's origin — same host and port, `/file` instead
+  of `/log` — and its query string carries over, so `client=` still attributes the upload the same
+  way it attributes log lines.
+- It needs only a devlog URL, not the `enabled` toggle: unlike `Log`/`Snapshot`, it is only ever
+  called from an explicit user action, so there is nothing to gate.
+- The server caps bodies at `MAX_DUMP_BYTES` (8 MB by default), so callers should check `bytes.Length`
+  before calling rather than rely on the resulting `HttpRequestException`.
+
 ## PluginPresence — cached "is that plugin loaded?"
 
 `DalamudReflector.TryGetDalamudPlugin` with `ignoreCache` walks Dalamud's entire installed-plugin

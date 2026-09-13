@@ -2,8 +2,10 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace XivHubPluginKit;
 
@@ -19,6 +21,7 @@ namespace XivHubPluginKit;
 ///   Telemetry = new DevTelemetry("MyPlugin", () =&gt; C.DevLog, () =&gt; C.DevLogUrl);
 ///   Telemetry.Log("something happened");
 ///   Telemetry.Snapshot(() =&gt; $"state={...}");   // call each frame; self-throttles
+///   await Telemetry.UploadFileAsync("capture", "json", bytes);
 ///   Telemetry.Dispose();
 ///
 /// IMPORTANT: build snapshot strings on the framework thread (where game reads are safe). This class
@@ -31,7 +34,9 @@ public sealed class DevTelemetry : IDisposable
     private readonly Func<string?> url;
     private readonly Action<string>? onError;
     private readonly ConcurrentQueue<string> queue = new();
-    private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(3) };
+    // Infinite here so a large file upload is not cut off; per-call timeouts are supplied
+    // via CancellationToken instead (3 s for log posts, 60 s for file uploads).
+    private readonly HttpClient http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly Timer timer;
     private long lastSnapshotTick;
 
@@ -78,6 +83,40 @@ public sealed class DevTelemetry : IDisposable
         try { Log(build()); } catch { /* never let telemetry break the loop */ }
     }
 
+    /// <summary>Upload one whole artefact (a capture, a struct dump) to the devlog server's
+    /// <c>POST /file</c>, tagged with this instance's <paramref name="source"/>. Unlike
+    /// <see cref="Log"/> and <see cref="Snapshot"/>, this deliberately ignores
+    /// <c>enabled()</c>: it is only ever called from an explicit user action (e.g. "save and
+    /// upload"), not from the per-frame log path, so there is nothing to gate.</summary>
+    /// <returns>The server-side path the artefact landed at.</returns>
+    public async Task<string> UploadFileAsync(string name, string ext, byte[] body, CancellationToken ct = default)
+    {
+        var logUrl = url();
+        if (string.IsNullOrWhiteSpace(logUrl)) throw new InvalidOperationException("no devlog URL configured");
+
+        using var content = new ByteArrayContent(body);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(60));
+        using var resp = await http.PostAsync(FileUrl(logUrl!, source, name, ext), content, cts.Token).ConfigureAwait(false);
+        var respBody = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode) throw new HttpRequestException($"{(int)resp.StatusCode}: {respBody.Trim()}");
+        return respBody.Trim();
+    }
+
+    /// <summary>Builds the <c>/file</c> URL from the configured <c>/log</c> URL's origin, carrying
+    /// its query string over so <c>client=</c> (see devlog_server.py) still attributes the upload to
+    /// the same machine as the log lines. The server names the artefact from <paramref name="plugin"/>,
+    /// <paramref name="name"/> and <paramref name="ext"/> (devlog_server.py's <c>_save_file</c>).</summary>
+    private static string FileUrl(string logUrl, string plugin, string name, string ext)
+    {
+        var uri = new Uri(logUrl);
+        var origin = uri.GetLeftPart(UriPartial.Authority);
+        var existingQuery = uri.Query.TrimStart('?');
+        var suffix = $"plugin={Uri.EscapeDataString(plugin)}&name={Uri.EscapeDataString(name)}&ext={Uri.EscapeDataString(ext)}";
+        return $"{origin}/file?{(existingQuery.Length > 0 ? existingQuery + "&" : "")}{suffix}";
+    }
+
     /// <param name="force">Ignore the post-failure backoff. Used on dispose, where
     /// this is the last chance to deliver whatever is buffered.</param>
     private void Flush(bool force = false)
@@ -99,7 +138,8 @@ public sealed class DevTelemetry : IDisposable
             try
             {
                 using var content = new StringContent(sb.ToString(), Encoding.UTF8, "text/plain");
-                using var resp = http.PostAsync(url(), content).GetAwaiter().GetResult();
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                using var resp = http.PostAsync(url(), content, cts.Token).GetAwaiter().GetResult();
                 resp.EnsureSuccessStatusCode();
                 pending.Clear();
             }
