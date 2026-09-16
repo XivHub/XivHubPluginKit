@@ -68,6 +68,26 @@ public static class VendorPrice
         return outside <= 0 ? 0 : (int)System.Math.Ceiling(outside / NetOfTax);
     }
 
+    /// <summary>
+    /// The lowest asking price whose after-tax proceeds still clear
+    /// <see cref="Outside"/> by <paramref name="margin"/> (a fraction, e.g. 0.25
+    /// for 25%); 0 when the item is worth nothing off the board, matching
+    /// <see cref="Floor"/>'s convention exactly. <c>ProfitFloor(itemId, 0)</c>
+    /// equals <see cref="Floor"/>.
+    ///
+    /// <see cref="Outside"/> is the anchor rather than a history median because
+    /// it is fixed by the game: an undercut war can walk every other number in
+    /// an item's price series down, including its own recent sales, but not the
+    /// gil a shop pays or charges for it.
+    /// </summary>
+    public static int ProfitFloor(uint itemId, double margin)
+    {
+        int outside = Outside(itemId);
+        if (outside <= 0) return 0;
+        double target = outside * (1 + margin);
+        return (int)System.Math.Ceiling(target / NetOfTax);
+    }
+
     private static HashSet<uint> BuildGilShopItems()
     {
         var set = new HashSet<uint>();
