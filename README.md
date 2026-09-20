@@ -128,6 +128,7 @@ Needs ECommons initialised in the consuming plugin. `FlightHelper` also needs
 | `Game/FlightHelper.cs` | `FlyingUnlocked(territoryId)` via the territory's completed `AetherCurrentCompFlgSet`. Unlike `Control.CanFly` it does **not** require being mounted, so it can decide to fly *before* mounting. |
 | `Game/MountHelper.cs` | `Mount()` / `Dismount()` (both General Action 9, Mount Roulette) and `Jump()` (General Action 2, useful to unstick on geometry). |
 | `Game/SprintHelper.cs` | `TrySprint()` — General Action 4, gated on `GetActionStatus == 0`, self-throttled to 2s. |
+| `Game/ScreenshotLatch.cs` | `TryRelease()` — clears a `ScreenShot.ScreenShotRequested` the game itself will never drain, through the game's own completion thunk rather than writing the flag directly. Needs `Resolve(ISigScanner)` once at startup; unlike the ECommons-dependent helpers above, it needs nothing else. |
 
 ```xml
 <Compile Include="..\..\XivHubPluginKit\PluginPresence.cs" Link="Kit\PluginPresence.cs" />
