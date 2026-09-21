@@ -52,6 +52,12 @@ python3 ~/dev/XivHubPluginKit/devlog_server.py
 Point the plugin's dev-log URL at `http://<this-box-LAN-ip>:9999/log`. Read the stream with
 `tail -f ~/.cache/zhyra-devlog/live.log`.
 
+A batch is appended before the response goes out, so a client that scores a stored POST as failed
+re-sends it. Each batch therefore carries `X-Devlog-Session` (one id per plugin run) and
+`X-Devlog-Offset` (where the batch starts in that run's line stream), and the server writes only
+the part past what it already holds. A client that sends neither is written verbatim.
+`python3 test_devlog_server.py` covers the retry cases.
+
 ### Several machines, one log
 
 Every line is prefixed with whoever sent it, so two people on the same LAN can point at the same

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -50,6 +51,14 @@ public sealed class DevTelemetry : IDisposable
     private readonly List<string> pending = new();
     private readonly object flushGate = new();
     private long backoffUntilTick;
+
+    // A POST the server stored but answered badly (it appends before replying, and closes the
+    // connection after) fails here and is retried, so the sink must be able to recognise what it
+    // already holds. The pair below is that: an id for this run's line stream, and how many of its
+    // lines the server has confirmed. A retry re-sends from the same offset, possibly with newer
+    // lines appended, and the server writes only the tail it has not seen. Guarded by flushGate.
+    private readonly string session = Guid.NewGuid().ToString("N")[..12];
+    private long delivered;
 
     private const int MaxBufferedLines = 5000;
     private const int FailureBackoffMs = 30_000;
@@ -153,12 +162,17 @@ public sealed class DevTelemetry : IDisposable
 
             var sb = new StringBuilder();
             foreach (var l in pending) sb.Append(l).Append('\n');
+            int count = pending.Count;
             try
             {
                 using var content = new StringContent(sb.ToString(), Encoding.UTF8, "text/plain");
+                using var req = new HttpRequestMessage(HttpMethod.Post, url()) { Content = content };
+                req.Headers.TryAddWithoutValidation("X-Devlog-Session", session);
+                req.Headers.TryAddWithoutValidation("X-Devlog-Offset", delivered.ToString(CultureInfo.InvariantCulture));
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                using var resp = http.PostAsync(url(), content, cts.Token).GetAwaiter().GetResult();
+                using var resp = http.SendAsync(req, cts.Token).GetAwaiter().GetResult();
                 resp.EnsureSuccessStatusCode();
+                delivered += count;
                 pending.Clear();
             }
             catch (Exception e)

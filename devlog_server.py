@@ -20,6 +20,7 @@ import re
 import socket
 import socketserver
 import sys
+import threading
 import urllib.parse
 
 PORT = int(os.environ.get("PORT", "9999"))
@@ -42,6 +43,31 @@ def _rotate_if_needed():
 
 
 _client_names = {}
+
+# How many lines of each client's stream are already on disk, keyed by the session id DevTelemetry
+# sends with every batch. A batch is appended before the response goes out and the connection is
+# closed after it, so a client can score a stored batch as failed and re-send it; without this it
+# would land again. Guarded by _write_lock together with the append it authorises, so a duplicate
+# check and its write cannot interleave with another thread's.
+_stream_offsets = {}
+_write_lock = threading.Lock()
+MAX_TRACKED_STREAMS = 64
+
+
+def _new_lines(session, offset, lines):
+    """The tail of a batch that is not already on disk, and the bookkeeping for it.
+
+    offset is where this batch starts in the session's line stream. The server has written up to
+    some point in that stream; anything at or before it arrived on an earlier attempt. A client too
+    old to send the pair (offset < 0) is taken at its word and everything is written.
+    """
+    if not session or offset < 0:
+        return lines
+    written = _stream_offsets.get(session, offset)
+    _stream_offsets[session] = max(written, offset + len(lines))
+    while len(_stream_offsets) > MAX_TRACKED_STREAMS:
+        del _stream_offsets[next(iter(_stream_offsets))]
+    return lines[min(max(written - offset, 0), len(lines)):]
 
 
 def _client_label(addr, override=None):
@@ -80,14 +106,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8", "replace")
         params = urllib.parse.parse_qs(query)
         client = _client_label(self.client_address[0], params.get("client", [""])[0])
-        # Every line carries its sender: several machines share one log, and a line that cannot be
-        # attributed is worse than no line when two people are reproducing the same bug.
-        body = "".join(f"{client} {line}\n" for line in body.splitlines())
-        _rotate_if_needed()
-        with open(LOGFILE, "a", encoding="utf-8") as f:
-            f.write(body)
-        sys.stdout.write(body)
-        sys.stdout.flush()
+        session = self.headers.get("X-Devlog-Session", "")
+        try:
+            offset = int(self.headers.get("X-Devlog-Offset", "-1"))
+        except ValueError:
+            offset = -1
+
+        with _write_lock:
+            lines = _new_lines(session, offset, body.splitlines())
+            # Every line carries its sender: several machines share one log, and a line that cannot
+            # be attributed is worse than no line when two people are reproducing the same bug.
+            body = "".join(f"{client} {line}\n" for line in lines)
+            if body:
+                _rotate_if_needed()
+                with open(LOGFILE, "a", encoding="utf-8") as f:
+                    f.write(body)
+                sys.stdout.write(body)
+                sys.stdout.flush()
         self.send_response(204)
         self.end_headers()
 
