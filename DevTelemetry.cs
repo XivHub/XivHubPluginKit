@@ -42,6 +42,7 @@ public sealed class DevTelemetry : IDisposable
     // the HttpClient being disposed underneath it. Never disposed itself: it owns no timer or handle.
     private readonly CancellationTokenSource disposing = new();
     private long lastSnapshotTick;
+    private string? lastSnapshot;
 
     // Lines drained from the queue but not yet accepted by the server. Held so a
     // failed POST costs nothing: the batch goes out again on the next attempt,
@@ -75,15 +76,24 @@ public sealed class DevTelemetry : IDisposable
         while (queue.Count > MaxBufferedLines && queue.TryDequeue(out _)) { }
     }
 
-    /// <summary>Call every frame; invokes <paramref name="build"/> and queues the result at most once
-    /// per <paramref name="intervalMs"/>. Build reads game state, so it runs on the calling thread.</summary>
+    /// <summary>Call every frame; invokes <paramref name="build"/> at most once per
+    /// <paramref name="intervalMs"/> and queues the result only when it differs from the last one
+    /// queued. A window left open on an idle game costs nothing, so the trace holds transitions
+    /// rather than a heartbeat. Build reads game state, so it runs on the calling thread.</summary>
     public void Snapshot(Func<string> build, int intervalMs = 1000)
     {
         if (!Active) return;
         var now = Environment.TickCount64;
         if (now - lastSnapshotTick < intervalMs) return;
         lastSnapshotTick = now;
-        try { Log(build()); } catch { /* never let telemetry break the loop */ }
+        try
+        {
+            var s = build();
+            if (s == lastSnapshot) return;
+            lastSnapshot = s;
+            Log(s);
+        }
+        catch { /* never let telemetry break the loop */ }
     }
 
     /// <summary>Upload one whole artefact (a capture, a struct dump) to the devlog server's
