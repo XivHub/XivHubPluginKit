@@ -61,8 +61,7 @@ public sealed record BuyResult
 ///
 /// Every quantity is confirmed by inventory delta rather than by assuming the
 /// shop callback worked, so a swallowed click costs a retry instead of a phantom
-/// <c>vendor_purchase</c> row. Steps mirror <see cref="PinchDriver"/>'s pipeline:
-/// each helper self-throttles, re-throttles while its addon isn't ready, and
+/// purchase report. Each helper self-throttles, re-throttles while its addon isn't ready, and
 /// gives up on its own wall-clock deadline so one bad stop can't kill a session.
 /// </summary>
 public sealed class ShopBuyer
@@ -84,7 +83,7 @@ public sealed class ShopBuyer
 
     public bool IsBusy => _tasks.IsBusy;
 
-    // AR-mirror throttle, same contract as PinchDriver's: gate every click, and
+    // AutoRetainer-style throttle: gate every click, and
     // keep the throttle fresh while waiting on an addon so the click lands N ms
     // after it becomes ready rather than on the first-ready frame.
     private const string ThrottleName = "KitShopBuyerThrottle";
@@ -520,8 +519,7 @@ public sealed class ShopBuyer
     /// <c>Close(true)</c> hides the widget without the game exiting the event
     /// behind it, which strands the player in the conversation: able to move,
     /// unable to interact with anything or even drop the target, with no UI left
-    /// to escape through — a client restart. The retainer walk learned this
-    /// already; see <see cref="RetainerWalk.CloseSelectStringBack"/>. Callback
+    /// to escape through — a client restart. Callback
     /// -1 is the handler the Escape key fires, so it unwinds one level the way
     /// the game intends, which is also what puts the NPC's menu back on screen
     /// after a shop rather than ending the conversation.
@@ -605,8 +603,7 @@ public sealed class ShopBuyer
     /// </summary>
     private async Task<BuyResult> BuyOneAsync(ShopVisit visit, ShopPurchase purchase, long gilReserve, CancellationToken ct)
     {
-        // Only the shortfall is bought; what is already in the bags is listed
-        // by the list leg without anyone paying for it twice.
+        // Qty is already the shortfall; callers subtract what they hold.
         int target = Math.Max(0, purchase.Qty);
         if (target == 0)
         {
