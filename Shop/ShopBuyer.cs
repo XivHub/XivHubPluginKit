@@ -137,10 +137,25 @@ public sealed class ShopBuyer
     /// <summary>True once the current step's deadline has passed.</summary>
     private bool Expired => Environment.TickCount64 > _deadlineMs;
 
+    /// <summary>
+    /// Queue steps on the framework thread, where the TaskManager runs, and not at all once the
+    /// session is cancelled. A step queued from the pool after a Stop has aborted the queue would
+    /// still run, fight <see cref="ConversationUnwinder"/> over the Shop addon, and buy after Stop.
+    /// </summary>
+    private Task EnqueueAsync(CancellationToken ct, params Func<bool?>[] steps) =>
+        Svc.Framework.RunOnFrameworkThread(() =>
+        {
+            if (ct.IsCancellationRequested) return;
+            foreach (var step in steps) _tasks.Enqueue(step);
+        });
+
+    /// <summary>Wait for the queue to empty; on cancellation, drop whatever is left on the framework thread.</summary>
     private async Task DrainTasks(CancellationToken ct)
     {
         while (_tasks.IsBusy && !ct.IsCancellationRequested)
             await Task.Delay(200, CancellationToken.None);
+        if (ct.IsCancellationRequested)
+            await Svc.Framework.RunOnFrameworkThread(() => _tasks.Abort());
     }
 
     /// <summary>
@@ -223,7 +238,7 @@ public sealed class ShopBuyer
         _seenMenuEntries = string.Empty;
 
         Step(OpenShopTimeoutMs);
-        _tasks.Enqueue(() => InteractWithVendor(visit.Npc, objectId));
+        await EnqueueAsync(ct, () => InteractWithVendor(visit.Npc, objectId));
         await DrainTasks(ct);
         if (ct.IsCancellationRequested) return "session aborted";
         if (_stepError.Length > 0) return _stepError;
@@ -250,7 +265,7 @@ public sealed class ShopBuyer
             return null;
 
         Step(MenuTimeoutMs);
-        _tasks.Enqueue(() => SelectShopMenu(visit.Npc, menu));
+        await EnqueueAsync(ct, () => SelectShopMenu(visit.Npc, menu));
         await DrainTasks(ct);
         if (ct.IsCancellationRequested) return "session aborted";
         if (_stepError.Length > 0) return _stepError;
@@ -506,8 +521,7 @@ public sealed class ShopBuyer
         if (ct.IsCancellationRequested) return;
         _shopCloseAttempts = 0;
         Step(MenuTimeoutMs);
-        _tasks.Enqueue(CloseShopAddon);
-        _tasks.Enqueue(CloseMenuAddon);
+        await EnqueueAsync(ct, CloseShopAddon, CloseMenuAddon);
         await DrainTasks(ct);
         if (_stepError.Length > 0)
             _log.Warning("Shop: {Failure}", _stepError);
@@ -653,8 +667,7 @@ public sealed class ShopBuyer
             int perClick = purchase.StackSize > 1 ? target - bought : 1;
 
             Step(PurchaseTimeoutMs);
-            _tasks.Enqueue(() => SelectShopItem(purchase.ItemId, perClick));
-            _tasks.Enqueue(ConfirmPurchase);
+            await EnqueueAsync(ct, () => SelectShopItem(purchase.ItemId, perClick), ConfirmPurchase);
             await DrainTasks(ct);
 
             if (_stepError.Length > 0)
