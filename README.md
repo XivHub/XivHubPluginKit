@@ -140,3 +140,55 @@ Needs ECommons initialised in the consuming plugin. `FlightHelper` also needs
 <Compile Include="..\..\XivHubPluginKit\PluginPresence.cs" Link="Kit\PluginPresence.cs" />
 <Compile Include="..\..\XivHubPluginKit\Game\LineOfSight.cs" Link="Kit\Game\LineOfSight.cs" />
 ```
+
+## Shop/ — buying from an NPC gil shop
+
+Buys a list of items from the vendor the player is standing next to, then leaves the
+conversation cleanly. Moved from FFMarketConnector's restock buy leg, which is tested in game.
+Needs ECommons initialised and `KitServices.Init(...)` called before first use, since the bag
+reads go through `InventoryScan` and `ItemSheet`.
+
+| File | What it does |
+| --- | --- |
+| `Shop/ShopBuyer.cs` | `RunStopAsync(ShopVisit, purchases, gilReserve, ct)` buys each `ShopPurchase` at the nearest matching NPC within 6 yalms and returns one `BuyResult` per item (requested, bought, observed unit price, failure reason). `FindVendor(npcIds)` (framework thread) and `IsAtVendorAsync(visit)` gate a UI on being in range. Timing comes from a `Func<ShopBuyerSettings>`, read on every use; the optional `onBought(visit, purchase, qty, unitPrice)` fires once per item that bought anything. `AbortAll()` drops queued steps. |
+| `Shop/ConversationUnwinder.cs` | `Start(steps, log)` unwinds whatever conversation addons are still up after a Stop, one per frame, within an 8 s budget. `ShopSteps` covers a vendor purchase: `SelectYesno`, `Shop`, `ShopExchangeCurrency`, `SelectIconString`, `SelectString`. `LeaveSelectString` and `LeaveSelectIconString` are the menu exits. |
+| `Shop/TalkSkipper.cs` | `Register()` / `Unregister()` clicks through every `Talk` bubble while registered. |
+| `Shop/Humanizer.cs` | `PauseAsync(minMs, maxMs, ct, repeat)` waits a random interval between whole actions; `repeat` halves the range. Never throws on cancellation. |
+| `Inventory/MainBags.cs` | Gil, free slots and per-item counts across `Inventory1`–`Inventory4`, the only containers a purchase lands in. Framework thread. |
+
+Rules the buyer encodes, each from a failure seen in game:
+
+- **Stack size decides the click size.** A stackable item takes the whole quantity in one click.
+  An item with stack size 1 (every furnishing) has no quantity field and is bought one unit per
+  click; asking for more buys nothing and leaves the shop unable to complete anything after it.
+- **Menus can be `SelectIconString`.** The estate servant draws its menu as `SelectIconString`,
+  most vendors as `SelectString`; both are read as "the menu". `ShopPurchase.Menu` is the English
+  entry label and must match what the game draws exactly.
+- **Leave a menu through its last entry ("Nothing"), never the cancel callback or `Close(true)`.**
+  Cancelling hides the window without ending the event, and the player is left stuck with the NPC
+  selected until a client restart.
+- **Close `Shop` until it is gone.** The cancel callback is fired up to three times, then the
+  `Shop` agent is hidden. Each menu category is its own conversation: close fully, talk again.
+- **Confirm by settled bag count.** A purchase counts only once the main-bag count has stopped
+  moving (up to 2.5 s); reading it the same frame made a good buy look failed and got it bought
+  twice.
+- **Check gil and bags before every click.** Buying stops at `gilReserve` and when the main bags
+  cannot take another unit, since both can change while the plan is on screen.
+- **English client labels.** Menu entries are matched by their English text.
+
+```xml
+<Compile Include="..\..\XivHubPluginKit\KitServices.cs" Link="Kit\KitServices.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\ItemSheet.cs" Link="Kit\Inventory\ItemSheet.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\SlotView.cs" Link="Kit\Inventory\SlotView.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\InventoryScan.cs" Link="Kit\Inventory\InventoryScan.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\MainBags.cs" Link="Kit\Inventory\MainBags.cs" />
+<Compile Include="..\..\XivHubPluginKit\Shop\ShopBuyer.cs" Link="Kit\Shop\ShopBuyer.cs" />
+<Compile Include="..\..\XivHubPluginKit\Shop\TalkSkipper.cs" Link="Kit\Shop\TalkSkipper.cs" />
+<Compile Include="..\..\XivHubPluginKit\Shop\Humanizer.cs" Link="Kit\Shop\Humanizer.cs" />
+<Compile Include="..\..\XivHubPluginKit\Shop\ConversationUnwinder.cs" Link="Kit\Shop\ConversationUnwinder.cs" />
+```
+
+```csharp
+// Plugin ctor, after ECommonsMain.Init:
+KitServices.Init(DataManager, Log, ChatGui, "[MyPlugin]");
+```
