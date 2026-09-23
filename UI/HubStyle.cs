@@ -13,12 +13,13 @@ namespace XivHubPluginKit.UI;
 /// draw itself. Adding a themed value is one entry — never a push in one place
 /// and a widget in another, which is how the two drift apart.
 ///
-/// The rule the palette encodes: gold marks what the user is acting on and
-/// nothing else. Interactive surfaces stay on the dark ramp
-/// (<c>HubSurface</c> → <c>HubHovered</c> → <c>HubActive</c>) and borrow gold only
-/// for the indicator inside them — the check mark, the slider grab, the active
-/// tab, a separator being dragged. Extending the theme means keeping that true;
-/// see <c>UI/THEME.md</c>.
+/// The rule the palette encodes: gold marks what the user can act on and what
+/// is selected, and its strength ranks them. A button is a brass tint over the
+/// dark ground, the way the game's own buttons are; the selected tab, the check
+/// mark and the slider grab carry gold; <see cref="Primary"/> is the one solid
+/// gold fill. Everything that is structure rather than an action (section
+/// headers, table headers, input frames) stays on the cool dark ramp. Extending
+/// the theme means keeping that true; see <c>UI/THEME.md</c>.
 /// </summary>
 public static class HubStyle
 {
@@ -53,8 +54,8 @@ public static class HubStyle
         new("color.windowBg",        "Window Background",        "HubWindowBg",    ImGuiCol.WindowBg, 0.97f),
         new("color.childBg",         "Child Background",         "HubChildBg",     ImGuiCol.ChildBg),
         new("color.popupBg",         "Popup Background",         "HubWindowBg",    ImGuiCol.PopupBg, 0.97f),
-        new("color.border",          "Border",                   "HubText",        ImGuiCol.Border, 0.08f,
-            "Every hairline in the theme. 8% white is the site's glass edge."),
+        new("color.border",          "Border",                   "HubText",        ImGuiCol.Border, 0.12f,
+            "Every hairline in the theme: window edges and the rim of every input and button."),
         new("color.borderShadow",    "Border Shadow",            "HubGround",      ImGuiCol.BorderShadow, 0.0f),
 
         new("color.frameBg",         "Frame Background",         "HubFrameBg",     ImGuiCol.FrameBg),
@@ -76,13 +77,15 @@ public static class HubStyle
         new("color.sliderGrab",      "Slider Grab",              "HubGoldDim",     ImGuiCol.SliderGrab),
         new("color.sliderGrabActive","Slider Grab (Active)",     "HubGold",        ImGuiCol.SliderGrabActive),
 
-        new("color.button",          "Button",                   "HubSurface",     ImGuiCol.Button),
-        new("color.buttonHovered",   "Button (Hover)",           "HubHovered",     ImGuiCol.ButtonHovered),
-        new("color.buttonActive",    "Button (Active)",          "HubActive",      ImGuiCol.ButtonActive),
+        new("color.button",          "Button",                   "HubGold",        ImGuiCol.Button, 0.26f,
+            "Brass over the dark ground, like the game's own buttons. Primary() is the solid fill above it."),
+        new("color.buttonHovered",   "Button (Hover)",           "HubGold",        ImGuiCol.ButtonHovered, 0.36f),
+        new("color.buttonActive",    "Button (Active)",          "HubGold",        ImGuiCol.ButtonActive, 0.46f),
 
-        new("color.header",          "Header",                   "HubSurface",     ImGuiCol.Header),
-        new("color.headerHovered",   "Header (Hover)",           "HubHovered",     ImGuiCol.HeaderHovered),
-        new("color.headerActive",    "Header (Active)",          "HubActive",      ImGuiCol.HeaderActive),
+        new("color.header",          "Header",                   "HubHeader",      ImGuiCol.Header,
+            Description: "Collapsing headers, selected rows and tree nodes. Structure, so it stays cool."),
+        new("color.headerHovered",   "Header (Hover)",           "HubHeaderHover", ImGuiCol.HeaderHovered),
+        new("color.headerActive",    "Header (Active)",          "HubHeaderActive",ImGuiCol.HeaderActive),
 
         new("color.separator",       "Separator",                "HubText",        ImGuiCol.Separator, 0.06f),
         new("color.separatorHovered","Separator (Hover)",        "HubGoldDim",     ImGuiCol.SeparatorHovered),
@@ -93,13 +96,14 @@ public static class HubStyle
         new("color.resizeGripActive","Resize Grip (Active)",     "HubGold",        ImGuiCol.ResizeGripActive),
 
         new("color.tab",             "Tab",                      "HubTableHead",   ImGuiCol.Tab),
-        new("color.tabHovered",      "Tab (Hover)",              "HubHovered",     ImGuiCol.TabHovered),
-        new("color.tabActive",       "Tab (Active)",             "HubTabActive",   ImGuiCol.TabActive),
+        new("color.tabHovered",      "Tab (Hover)",              "HubHeaderHover", ImGuiCol.TabHovered),
+        new("color.tabActive",       "Tab (Active)",             "HubGold",        ImGuiCol.TabActive, 0.30f,
+            "The selected tab. This ImGui has no tab overline, so selection shows as a gold tint."),
         new("color.tabUnfocused",    "Tab (Unfocused)",          "HubTableHead",   ImGuiCol.TabUnfocused),
-        new("color.tabUnfocusedActive","Tab (Unfocused Active)", "HubSurface",     ImGuiCol.TabUnfocusedActive),
+        new("color.tabUnfocusedActive","Tab (Unfocused Active)", "HubGold",        ImGuiCol.TabUnfocusedActive, 0.20f),
 
         new("color.tableHeaderBg",   "Table Header Background",  "HubTableHead",   ImGuiCol.TableHeaderBg),
-        new("color.tableBorderStrong","Table Border (Strong)",   "HubText",        ImGuiCol.TableBorderStrong, 0.10f),
+        new("color.tableBorderStrong","Table Border (Strong)",   "HubText",        ImGuiCol.TableBorderStrong, 0.14f),
         new("color.tableBorderLight","Table Border (Light)",     "HubText",        ImGuiCol.TableBorderLight, 0.04f),
         new("color.tableRowBg",      "Table Row Background",     "HubGround",      ImGuiCol.TableRowBg, 0f),
         new("color.tableRowBgAlt",   "Table Row Background (Alt)","HubText",       ImGuiCol.TableRowBgAlt, 0.022f,
@@ -142,7 +146,8 @@ public static class HubStyle
         new("float.windowBorderSize", "Window Border Size", 1.5f, ImGuiStyleVar.WindowBorderSize,  0f, 5f),
         new("float.childBorderSize",  "Child Border Size",  1f,   ImGuiStyleVar.ChildBorderSize,   0f, 5f),
         new("float.popupBorderSize",  "Popup Border Size",  1.5f, ImGuiStyleVar.PopupBorderSize,   0f, 5f),
-        new("float.frameBorderSize",  "Frame Border Size",  0f,   ImGuiStyleVar.FrameBorderSize,   0f, 5f),
+        new("float.frameBorderSize",  "Frame Border Size",  1f,   ImGuiStyleVar.FrameBorderSize,   0f, 5f,
+            "The hairline that shows where an input or checkbox is when its fill is close to the window."),
         new("float.indentSpacing",    "Indent Spacing",     18f,  ImGuiStyleVar.IndentSpacing,     0f, 100f),
         new("float.scrollbarSize",    "Scrollbar Size",     10f,  ImGuiStyleVar.ScrollbarSize,     4f, 30f),
         new("float.grabMinSize",      "Grab Minimum Size",  16f,  ImGuiStyleVar.GrabMinSize,       1f, 80f),
@@ -230,8 +235,9 @@ public static class HubStyle
     // --- semantic helpers ----------------------------------------------------
 
     /// <summary>
-    /// The one gold fill in the system, for the single irreversible action in a
-    /// window ("Confirm and run", "Apply 6 moves"). Wrap the button call:
+    /// The one solid gold fill in the system, dark text on gold, for the single
+    /// irreversible action in a window ("Confirm and run", "Apply 6 moves"). It
+    /// ranks above the brass tint every other button has. Wrap the button call:
     /// <c>using (HubStyle.Primary()) if (ImGui.Button("Confirm")) …</c>.
     /// A window with two of these has a hierarchy problem, not a theme problem.
     /// </summary>
@@ -252,11 +258,11 @@ public static class HubStyle
     {
         public PrimaryScope()
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, HubColors.Get("HubSurface"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, HubColors.Get("HubHovered"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, HubColors.Get("HubPrimaryPressed"));
-            ImGui.PushStyleColor(ImGuiCol.Text, HubColors.Get("HubGold"));
-            ImGui.PushStyleColor(ImGuiCol.Border, HubColors.Get("HubGold", 0.40f));
+            ImGui.PushStyleColor(ImGuiCol.Button, HubColors.Get("HubGold"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, HubColors.Get("HubGoldBright"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, HubColors.Get("HubGoldDim"));
+            ImGui.PushStyleColor(ImGuiCol.Text, HubColors.Get("HubGround"));
+            ImGui.PushStyleColor(ImGuiCol.Border, HubColors.Get("HubGoldBright", 0.60f));
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
         }
 

@@ -39,23 +39,25 @@ public static class HubColors
         { "HubWarn",       "#ff9147" },
         { "HubBad",        "#e0524a" },
 
-        // Surfaces, darkest to lightest.
+        // Surfaces, darkest to lightest. The window sits over the game, so a step
+        // on this ramp has to clear about 1.2:1 against HubWindowBg to read at all.
         { "HubGround",     "#080a11" },
         { "HubTitleBg",    "#0a0d14" },
         { "HubWindowBg",   "#0d1017" },
         { "HubChildBg",    "#11151f" },
         { "HubTitleActive","#131824" },
-        { "HubTableHead",  "#141926" },
-        { "HubFrameBg",    "#171b26" },
         { "HubSurface",    "#1a1f2b" },
-        { "HubFrameHover", "#1d2230" },
+        { "HubTableHead",  "#202636" },
+        { "HubFrameBg",    "#222939" },
         { "HubScrollGrab", "#232a38" },
-        { "HubFrameActive","#232939" },
+        { "HubHeader",     "#262d3d" },
         { "HubHovered",    "#262f41" },
-        { "HubTabActive",  "#2b3446" },
+        { "HubFrameHover", "#2a3246" },
         { "HubScrollHover","#2e3648" },
+        { "HubHeaderHover","#2f374b" },
         { "HubActive",     "#313c52" },
-        { "HubPrimaryPressed", "#443729" },
+        { "HubFrameActive","#323b52" },
+        { "HubHeaderActive","#38415a" },
     };
 
     /// <summary>User overrides, by the same names. Empty until something is set.</summary>

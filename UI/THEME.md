@@ -45,16 +45,28 @@ changing a colour in one plugin reaches the rest.
 
 ## The rule
 
-**Gold marks what the user is acting on, and nothing else.**
+**Gold marks what the user can act on and what is selected, and its strength
+ranks them.**
 
-A gold-accented theme fails the moment every button and header takes the accent:
-the window turns amber and nothing stands out. So interactive surfaces stay on
-the dark ramp — `HubSurface` → `HubHovered` → `HubActive` — and gold appears only
-as the indicator inside them: the check mark, the slider grab, the active tab,
-the separator being dragged, the scrollbar grab while it is held.
+| Strength | Where |
+| --- | --- |
+| Solid gold, dark text | `HubStyle.Primary()`: the one irreversible action in a window |
+| Brass tint (gold at 26%, 36% hover, 46% pressed) | every other button, like the game's own buttons |
+| Gold tint (30%) | the selected tab |
+| Gold indicator | the check mark, the slider grab, a separator or scrollbar being dragged |
 
-`HubStyle.Primary()` is the single exception and the only gold fill in the
-system. It is for the one irreversible action in a window — "Confirm and run",
+Structure that is not an action stays on the cool dark ramp: collapsing
+headers and selected rows (`HubHeader`), table headers and tabs at rest
+(`HubTableHead`), input frames (`HubFrameBg`) with a 1 px hairline at 12% white.
+A gold-accented theme fails when structure takes the accent too: the window
+turns amber and the buttons stop standing out.
+
+The window sits over the game, so a surface has to clear about 1.2:1 contrast
+against `HubWindowBg` to read at all, and a button about 1.7:1. Check a new
+surface against those numbers before adding it; the ramp in `HubColors.cs` is
+ordered by lightness.
+
+`Primary()` is for one action per window, such as "Confirm and run" or
 "Apply 6 moves". A window with two of them has a hierarchy problem that a theme
 cannot fix.
 
@@ -162,8 +174,8 @@ tooltip.
 Derive it from the brand rather than inventing: the site tokens are `#080a11`,
 `#eef1f8`, `#9aa6bd`, `#6a7488`, `#d9b370`, `#f4d79a`, `#86b8ec`, and the logo's
 crystal ramp runs `#ffe7b3` → `#ecca84` → `#cda35d` → `#7c5f2c`. If you need a
-surface, it goes on the existing dark ramp between two neighbours — do not
-invent a lighter one to make something stand out, that is what gold is for.
+surface, it goes on the existing dark ramp between two neighbours; to make an
+action stand out, use gold's strengths above instead of a lighter surface.
 
 **4. Add a scoped helper.** Behaviour that is not a single style value —
 `Primary()` is the example — goes in `HubStyle` as an `IDisposable` scope that
