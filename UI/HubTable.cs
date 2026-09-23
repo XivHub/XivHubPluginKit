@@ -6,7 +6,7 @@ namespace XivHubPluginKit.UI;
 
 /// <summary>
 /// A data table with the flags every plugin's table wants and none of them remembered to ask for:
-/// row striping, drag-resizable columns, and no saved layout (see <c>UI/THEME.md</c>'s "Tables and
+/// row striping, drag-resizable stretch columns, and no saved layout (see <c>UI/THEME.md</c>'s "Tables and
 /// tabs" — ImGui saves column widths by position, so a table that gains a column loads the old
 /// first column's width into the new one).
 ///
@@ -30,11 +30,13 @@ public static class HubTable
     public static void Stretch(string name, float weight = 1, ImGuiTableColumnFlags extra = 0)
         => ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthStretch | extra, weight);
 
-    /// <summary><c>WidthFixed</c> with no width, so ImGui fits the column to its header and
-    /// contents every frame until the user drags it — the opposite of a pixel width, which stops
-    /// fitting the moment a larger number or a bigger font scale shows up.</summary>
+    /// <summary><c>WidthFixed | NoResize</c> with no width, so ImGui fits the column to its header
+    /// and contents every frame. ImGui refits a fixed column every frame only when it can't be
+    /// resized; a resizable one keeps the width measured in its first frames (imgui_tables.cpp
+    /// <c>TableUpdateLayout</c>, "Latch initial size for fixed columns"), so a table first drawn
+    /// with short or no rows would stay too narrow once its real rows arrive.</summary>
     public static void Fit(string name, ImGuiTableColumnFlags extra = 0)
-        => ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthFixed | extra);
+        => ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize | extra);
 
     /// <summary>A column exactly <paramref name="size"/> wide, scaled by
     /// <see cref="ImGuiHelpers.GlobalScale"/>, for the icon it holds rather than its text.</summary>

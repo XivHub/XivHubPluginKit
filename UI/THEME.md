@@ -63,7 +63,7 @@ it before every commit that touches UI code.
 - **Tables**: `HubTable.Begin(id, columns, size, extra)` sets `RowBg | Resizable | NoSavedSettings`
   plus whatever `extra` asks for; `End()` closes it. `Stretch(name, weight, extra)` and `Fit(name, extra)`
   replace `TableSetupColumn` for a name column and a fixed one respectively (see "Tables and tabs"
-  below for why a pixel width is wrong); `Icon(id, size, extra)` is the one legitimate fixed-pixel column,
+  below for why a pixel width is wrong; a `Fit` column can't be dragged, which is what keeps it fitted); `Icon(id, size, extra)` is the one legitimate fixed-pixel column,
   scaled by `ImGuiHelpers.GlobalScale`. `Cell(text)`, `Cell(color, text)` and `Number(text)`
   (right-aligned) are the per-cell draws.
 - **Tabs**: `HubTabs.Begin(id)` / `End()` is `BeginTabBar`/`EndTabBar` with `FittingPolicyScroll`
@@ -215,9 +215,11 @@ pushes and pops a matched count. Never leave a push unbalanced across a
 
 **Tables and tabs.** Dalamud's ImGui binding is older than ImGui's tab overline, so the selected
 tab shows through `color.tabActive` alone.
-- Give fixed columns no pixel width (`WidthFixed` with no size): ImGui then fits them to their
-  header and contents every frame until the user drags one. A pixel width clips at larger numbers
-  and font scales. Keep one `WidthStretch` column for the name.
+- Give fixed columns no pixel width and no resize (`WidthFixed | NoResize` with no size, which is
+  `HubTable.Fit`): ImGui then fits them to their header and contents every frame. In a `Resizable`
+  table a resizable fixed column keeps the width it measured in its first frames, so rows that
+  arrive later are cut off until "Size column to fit". A pixel width clips at larger numbers and
+  font scales. Keep one `WidthStretch` column for the name.
 - Pass `ImGuiTableFlags.NoSavedSettings` on data tables. ImGui saves column widths by position, so a
   table that gains a column loads the old first column's width into the new one.
 - Pass `ImGuiTabBarFlags.FittingPolicyScroll` to a tab bar that can outgrow its window, so tabs
