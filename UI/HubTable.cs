@@ -27,8 +27,8 @@ public static class HubTable
     /// <summary>The one column that should absorb whatever width the fixed columns don't need
     /// (a name or description). <paramref name="weight"/> splits that space between several
     /// stretch columns in the same table.</summary>
-    public static void Stretch(string name, float weight = 1)
-        => ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthStretch, weight);
+    public static void Stretch(string name, float weight = 1, ImGuiTableColumnFlags extra = 0)
+        => ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthStretch | extra, weight);
 
     /// <summary><c>WidthFixed</c> with no width, so ImGui fits the column to its header and
     /// contents every frame until the user drags it — the opposite of a pixel width, which stops
@@ -38,8 +38,8 @@ public static class HubTable
 
     /// <summary>A column exactly <paramref name="size"/> wide, scaled by
     /// <see cref="ImGuiHelpers.GlobalScale"/>, for the icon it holds rather than its text.</summary>
-    public static void Icon(string id, float size)
-        => ImGui.TableSetupColumn(id, ImGuiTableColumnFlags.WidthFixed, size * ImGuiHelpers.GlobalScale);
+    public static void Icon(string id, float size, ImGuiTableColumnFlags extra = 0)
+        => ImGui.TableSetupColumn(id, ImGuiTableColumnFlags.WidthFixed | extra, size * ImGuiHelpers.GlobalScale);
 
     public static void Cell(string text)
     {
