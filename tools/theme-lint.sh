@@ -29,6 +29,7 @@ begin_table=0
 begin_tabbar=0
 push_style_color=0
 ellipsis=0
+minus=0
 
 for f in "${files[@]}"; do
   while IFS= read -r line; do
@@ -68,6 +69,15 @@ for f in "${files[@]}"; do
     echo "$f:$lineno: U+2026 in a string literal renders as three dots in the game font; end a status line with a full stop instead"
     ellipsis=$((ellipsis + 1)); hits=$((hits + 1))
   done < <(grep -nP '"[^"]*\x{2026}[^"]*"' "$f" || true)
+
+  while IFS= read -r line; do
+    content="${line#*:}"
+    trimmed="${content#"${content%%[![:space:]]*}"}"
+    [[ "$trimmed" == //* ]] && continue
+    lineno="${line%%:*}"
+    echo "$f:$lineno: U+2212 in a string literal renders as \"=\" in the game font; use ASCII \"-\""
+    minus=$((minus + 1)); hits=$((hits + 1))
+  done < <(grep -nP '"[^"]*\x{2212}[^"]*"' "$f" || true)
 done
 
 echo "---"
@@ -77,5 +87,6 @@ echo "ImGui.BeginTable(: $begin_table"
 echo "ImGui.BeginTabBar( without FittingPolicyScroll: $begin_tabbar"
 echo "ImGui.PushStyleColor( outside UI/: $push_style_color"
 echo "U+2026 in a string literal: $ellipsis"
+echo "U+2212 in a string literal: $minus"
 
 [[ "$hits" -eq 0 ]]
