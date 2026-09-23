@@ -114,15 +114,20 @@ public sealed class DevTelemetryTests
     [InlineData("session")]
     [InlineData("seq")]
     [InlineData("kind")]
-    public void ReservedKeyThrows(string key)
+    public void ReservedKeyIsRenamedAndReported(string key)
     {
         using var server = new FakeDevlog();
-        var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
+        var errors = new ConcurrentQueue<string>();
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl, errors.Enqueue);
 
-        Assert.Throws<ArgumentException>(() => t.Record("probe", new Dictionary<string, object?> { ["ok"] = 1, [key] = "x" }));
+        t.Record("probe", new Dictionary<string, object?> { ["ok"] = 1, [key] = "x" });
         t.Dispose();
 
-        Assert.Empty(server.Records());
+        var r = Assert.Single(server.Records());
+        Assert.Equal("probe", r.GetProperty("kind").GetString());
+        Assert.Equal("x", r.GetProperty(key + "_").GetString());
+        Assert.Equal(1, r.GetProperty("ok").GetInt32());
+        Assert.Contains(errors, e => e.Contains($"'{key}' is reserved"));
     }
 
     [Fact]

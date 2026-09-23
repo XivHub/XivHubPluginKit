@@ -208,8 +208,10 @@ public sealed class DevTelemetry : IDisposable
     /// and reported to <c>onError</c> without using a <c>seq</c>.</para>
     /// <para><c>seq</c> is taken before the record joins the queue, so calls racing on two threads
     /// can reach the file out of <c>seq</c> order; sort by <c>seq</c> when order matters.</para></summary>
-    /// <exception cref="ArgumentException"><paramref name="fields"/> holds <c>ts</c>, <c>src</c>,
-    /// <c>session</c>, <c>seq</c> or <c>kind</c>.</exception>
+    /// <para>A field named <c>ts</c>, <c>src</c>, <c>session</c>, <c>seq</c> or <c>kind</c> is
+    /// written as that name plus <c>_</c> and reported to <c>onError</c>: a record is a debugging
+    /// aid, so a caller's mistaken field name must never break the feature that records it, and
+    /// this path only runs while the devlog is on, where no test reaches it.</para>
     public void Record(string kind, IReadOnlyDictionary<string, object?> fields)
     {
         if (disposing.IsCancellationRequested || !Active) return;
@@ -227,7 +229,7 @@ public sealed class DevTelemetry : IDisposable
             return;
         }
         if (reservedKey != null)
-            throw new ArgumentException($"'{reservedKey}' is a reserved record key", nameof(fields));
+            ReportError($"record '{kind}': field '{reservedKey}' is reserved; written as '{reservedKey}_'");
 
         // Nothing after this point can fail, so every seq taken reaches the queue.
         long seq = Interlocked.Increment(ref recordSeq);
@@ -252,7 +254,8 @@ public sealed class DevTelemetry : IDisposable
     }
 
     /// <summary>The caller's fields as one JSON object, or an empty array with
-    /// <paramref name="reservedKey"/> set when a key is reserved. Only enumerating
+    /// <paramref name="reservedKey"/> set to the first reserved key met, which is written with a
+    /// trailing <c>_</c>. Only enumerating
     /// <paramref name="fields"/> can throw: every value is serialised on its own by
     /// <see cref="SerializeValue"/>, and the writer replaces invalid UTF-16 in keys.</summary>
     private static byte[] SerializeFields(IReadOnlyDictionary<string, object?>? fields, out string? reservedKey)
@@ -266,12 +269,13 @@ public sealed class DevTelemetry : IDisposable
             {
                 foreach (var (key, value) in fields)
                 {
+                    var name = key;
                     if (ReservedRecordKeys.Contains(key))
                     {
-                        reservedKey = key;
-                        return [];
+                        reservedKey ??= key;
+                        name = key + "_";
                     }
-                    w.WritePropertyName(key);
+                    w.WritePropertyName(name);
                     w.WriteRawValue(SerializeValue(value), skipInputValidation: true);
                 }
             }
