@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility;
 
 namespace XivHubPluginKit.UI;
 
@@ -207,14 +208,24 @@ public static class HubStyle
             ImGui.PushStyleColor(o.Target, Resolve(o));
             _colorsPushed++;
         }
+        // Every entry in _vectors and _floats is a size — a padding, a spacing, a rounding, a
+        // border, scrollbar or grab dimension, an indent — so every one of them scales. ImGui's
+        // FontGlobalScale (ImGuiHelpers.GlobalScale) only scales font glyph metrics; it does not
+        // touch style vars, so Dalamud's own windows multiply their raw pixel geometry by it
+        // explicitly wherever they push it (WindowHost.ApplyConditionals scales Size and
+        // SizeConstraints the same way; PluginInstallerWindow scales every literal pixel constant it
+        // pushes as a style var). A theme table with an unscaled option would shrink to nothing next
+        // to game text at high UI scale, so this table matches that convention rather than adding an
+        // exception.
+        var scale = ImGuiHelpers.GlobalScale;
         foreach (var o in _vectors)
         {
-            ImGui.PushStyleVar(o.Target, Resolve(o));
+            ImGui.PushStyleVar(o.Target, Resolve(o) * scale);
             _varsPushed++;
         }
         foreach (var o in _floats)
         {
-            ImGui.PushStyleVar(o.Target, Resolve(o));
+            ImGui.PushStyleVar(o.Target, Resolve(o) * scale);
             _varsPushed++;
         }
     }

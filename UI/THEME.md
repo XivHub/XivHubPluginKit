@@ -4,7 +4,7 @@ Every XIV Hub plugin draws in one theme, so a stack of ten windows reads as one
 product rather than ten hobby projects. The palette is lifted from xivhub.net;
 the crystal in the logo is where the gold comes from.
 
-Four files, all linked source:
+Seven files, all linked source:
 
 | File | What it is |
 | --- | --- |
@@ -12,10 +12,16 @@ Four files, all linked source:
 | `UI/HubStyle.cs` | The option table, `Push`/`Pop`, and the semantic helpers. |
 | `UI/HubThemeConfig.cs` | The persisted overrides and where they are stored. |
 | `UI/HubThemeEditor.cs` | The settings UI, generated from the option table. |
+| `UI/HubText.cs` | Coloured text that wraps, and the seven role helpers (`Bad`, `Warn`, and so on). |
+| `UI/HubTable.cs` | A themed `BeginTable`, stretch/fit/icon columns, and cell helpers. |
+| `UI/HubTabs.cs` | A tab bar that scrolls instead of truncating. |
+
+`UI/HubWindow.cs` (`FitHeight`) is an eighth file, wired only into the plugins that have a window it
+applies to; see "Helpers" below.
 
 ## Wiring a plugin
 
-Add the four `<Compile Include>` lines, then three calls:
+Add the seven `<Compile Include>` lines, then three calls:
 
 ```csharp
 // once, at plugin start
@@ -42,6 +48,31 @@ stack is global, so a miscount corrupts every plugin that draws after this one.
 The config lives at `<pluginConfigs>/XivHub/ui-theme.json`, beside the plugin
 config directories rather than inside one. The theme belongs to the family, so
 changing a colour in one plugin reaches the rest.
+
+## Helpers
+
+Four helpers sit next to the theme so a call site doesn't have to re-derive its rules (wrapping,
+`NoSavedSettings`, `FittingPolicyScroll`, `ImGuiHelpers.GlobalScale`) each time. `tools/theme-lint.sh
+<plugin dir>` greps a plugin for the raw ImGui calls these replace and exits 1 if it finds any; run
+it before every commit that touches UI code.
+
+- **Text**: `HubText.Bad`/`Warn`/`Good`/`Info`/`Faint`/`Muted`/`Accent(text)` draw a `HubStyle` role
+  wrapped at the window edge, so a role colour never becomes an unreadable single line running off
+  the window; `Colored(color, text)` is the same for a colour outside those seven. `Inline(color,
+  text)` does not wrap, for a coloured fragment built with `SameLine` (a number inside a sentence).
+- **Tables**: `HubTable.Begin(id, columns, size, extra)` sets `RowBg | Resizable | NoSavedSettings`
+  plus whatever `extra` asks for; `End()` closes it. `Stretch(name, weight)` and `Fit(name, extra)`
+  replace `TableSetupColumn` for a name column and a fixed one respectively (see "Tables and tabs"
+  below for why a pixel width is wrong); `Icon(id, size)` is the one legitimate fixed-pixel column,
+  scaled by `ImGuiHelpers.GlobalScale`. `Cell(text)`, `Cell(color, text)` and `Number(text)`
+  (right-aligned) are the per-cell draws.
+- **Tabs**: `HubTabs.Begin(id)` / `End()` is `BeginTabBar`/`EndTabBar` with `FittingPolicyScroll`
+  already set.
+- **Window height**: `HubWindow.FitHeight(this)`, called at the end of a `Window.Draw()`, caps that
+  window at its own content height instead of letting it be dragged taller than anything it draws.
+  Wire `UI/HubWindow.cs` only into a plugin that has a window like this; do not call it from a
+  window whose child fills `GetContentRegionAvail().Y`, since that child would then size itself off
+  the window's last height instead of its own content, and the two would never settle.
 
 ## The rule
 
