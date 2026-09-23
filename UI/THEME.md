@@ -61,7 +61,9 @@ it before every commit that touches UI code.
   the window; `Colored(color, text)` is the same for a colour outside those seven. `Inline(color,
   text)` does not wrap, for a coloured fragment built with `SameLine` (a number inside a sentence).
 - **Tables**: `HubTable.Begin(id, columns, size, extra)` sets `RowBg | Resizable | NoSavedSettings`
-  plus whatever `extra` asks for; `End()` closes it. `Stretch(name, weight, extra)` and `Fit(name, extra)`
+  plus whatever `extra` asks for, leaving out `NoSavedSettings` when `extra` has `Hideable` or
+  `Reorderable` (the user's hidden and reordered columns should come back; change such a table's
+  id when its columns change); `End()` closes it. `Stretch(name, weight, extra)` and `Fit(name, extra)`
   replace `TableSetupColumn` for a name column and a fixed one respectively (see "Tables and tabs"
   below for why a pixel width is wrong; a `Fit` column can't be dragged, which is what keeps it fitted); `Icon(id, size, extra)` is the one legitimate fixed-pixel column,
   scaled by `ImGuiHelpers.GlobalScale`. `Cell(text)`, `Cell(color, text)` and `Number(text)`

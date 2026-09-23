@@ -18,9 +18,17 @@ namespace XivHubPluginKit.UI;
 /// </summary>
 public static class HubTable
 {
+    /// <summary>A table with <c>RowBg | Resizable | NoSavedSettings</c> plus <paramref name="extra"/>.
+    /// A table whose <paramref name="extra"/> lets the user hide or reorder columns keeps its saved
+    /// settings instead, since those choices are the layout the user wants back next session; give
+    /// such a table a new <paramref name="id"/> when its columns change.</summary>
     public static bool Begin(string id, int columns, Vector2 size = default, ImGuiTableFlags extra = 0)
-        => ImGui.BeginTable(id, columns,
-            ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.NoSavedSettings | extra, size);
+    {
+        var flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | extra;
+        if ((extra & (ImGuiTableFlags.Hideable | ImGuiTableFlags.Reorderable)) == 0)
+            flags |= ImGuiTableFlags.NoSavedSettings;
+        return ImGui.BeginTable(id, columns, flags, size);
+    }
 
     public static void End() => ImGui.EndTable();
 
