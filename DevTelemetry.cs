@@ -1,10 +1,13 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,6 +25,7 @@ namespace XivHubPluginKit;
 ///   Telemetry = new DevTelemetry("MyPlugin", () =&gt; C.DevLog, () =&gt; C.DevLogUrl);
 ///   Telemetry.Log("something happened");
 ///   Telemetry.Snapshot(() =&gt; $"state={...}");   // call each frame; self-throttles
+///   Telemetry.Record("callback", new Dictionary&lt;string, object?&gt; { ["addon"] = "Shop" });
 ///   await Telemetry.UploadFileAsync("capture", "json", bytes);
 ///   Telemetry.Dispose();
 ///
@@ -60,8 +64,40 @@ public sealed class DevTelemetry : IDisposable
     private readonly string session = Guid.NewGuid().ToString("N")[..12];
     private long delivered;
 
+    // Structured records: a second line stream, posted to /records as JSON lines. It has its own
+    // offset and backoff so either endpoint failing leaves the other flowing.
+    //
+    // pendingRecords holds every record not yet confirmed by the server, oldest first, as UTF-8
+    // without the trailing newline; there is no separate drained batch, so the byte cap bounds all
+    // of it. recordsDelivered is the stream position of its head. A record dropped by the cap still
+    // advances recordsDelivered, so every later record keeps the position the server expects: after
+    // a post the server stored but the client scored as failed, the retry starts past the drop and
+    // the server skips exactly the lines it already holds. Guarded by recordsGate, which is only
+    // ever taken briefly and never while posting; Flush takes it inside flushGate.
+    private readonly Queue<byte[]> pendingRecords = new();
+    private readonly object recordsGate = new();
+    private long pendingRecordBytes;
+    private long recordsDelivered;
+    private long recordsBackoffUntilTick;
+    private long recordSeq;
+
     private const int MaxBufferedLines = 5000;
     private const int FailureBackoffMs = 30_000;
+    private const long MaxBufferedRecordBytes = 16L << 20;
+    // Keeps one post well inside the 3 s timeout on a LAN.
+    private const int MaxRecordPostBytes = 1 << 20;
+
+    // src, session, seq and kind are what a reader filters records by, and ts orders them, so a
+    // caller field may not shadow any of them.
+    private static readonly HashSet<string> ReservedRecordKeys = new(StringComparer.Ordinal)
+        { "ts", "src", "session", "seq", "kind" };
+
+    // Records are read with jq and by eye, never embedded in HTML, so non-ASCII text stays readable
+    // instead of becoming \uXXXX. Control characters, including '\n', are still escaped, which keeps
+    // one record on one line.
+    private static readonly JavaScriptEncoder RecordEncoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+    private static readonly JsonWriterOptions RecordWriterOptions = new() { Encoder = RecordEncoder };
+    private static readonly JsonSerializerOptions RecordSerializerOptions = new() { Encoder = RecordEncoder };
 
     public DevTelemetry(string source, Func<bool> enabled, Func<string?> url, Action<string>? onError = null)
     {
@@ -75,6 +111,10 @@ public sealed class DevTelemetry : IDisposable
 
     /// <summary>Whether telemetry is currently active (toggle on and an endpoint set).</summary>
     public bool Active => enabled() && !string.IsNullOrWhiteSpace(url());
+
+    /// <summary>This instance's id: the <c>session</c> of every record, and the stream id the
+    /// server dedupes retried batches by.</summary>
+    public string Session => session;
 
     /// <summary>Queue a log line (no-op when inactive). Safe to call from the framework thread.</summary>
     public void Log(string line)
@@ -103,6 +143,57 @@ public sealed class DevTelemetry : IDisposable
             Log(s);
         }
         catch { /* never let telemetry break the loop */ }
+    }
+
+    /// <summary>Queue one structured record (no-op when inactive): a single JSON object with
+    /// <c>ts</c> (local time with offset, invariant culture), <c>src</c> (this instance's source),
+    /// <c>session</c> (<see cref="Session"/>), <c>seq</c> (1, 2, … per instance) and
+    /// <c>kind</c>, followed by every entry of <paramref name="fields"/> in enumeration order.
+    /// Values are serialised by their runtime type. The server appends it to <c>records.jsonl</c>.
+    /// Safe to call from any thread; serialisation runs on the calling thread.
+    /// <para><c>seq</c> is taken before the record joins the queue, so calls racing on two threads
+    /// can reach the file out of <c>seq</c> order; sort by <c>seq</c> when order matters.</para></summary>
+    /// <exception cref="ArgumentException"><paramref name="fields"/> holds <c>ts</c>, <c>src</c>,
+    /// <c>session</c>, <c>seq</c> or <c>kind</c>.</exception>
+    /// <exception cref="NotSupportedException">A field value's type cannot be serialised.</exception>
+    public void Record(string kind, IReadOnlyDictionary<string, object?> fields)
+    {
+        if (!Active) return;
+        foreach (var key in fields.Keys)
+        {
+            if (ReservedRecordKeys.Contains(key))
+                throw new ArgumentException($"'{key}' is a reserved record key", nameof(fields));
+        }
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var w = new Utf8JsonWriter(buffer, RecordWriterOptions))
+        {
+            w.WriteStartObject();
+            w.WriteString("ts", DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz", CultureInfo.InvariantCulture));
+            w.WriteString("src", source);
+            w.WriteString("session", session);
+            w.WriteNumber("seq", Interlocked.Increment(ref recordSeq));
+            w.WriteString("kind", kind);
+            foreach (var (key, value) in fields)
+            {
+                w.WritePropertyName(key);
+                JsonSerializer.Serialize(w, value, RecordSerializerOptions);
+            }
+            w.WriteEndObject();
+        }
+        var line = buffer.WrittenSpan.ToArray();
+
+        lock (recordsGate)
+        {
+            pendingRecords.Enqueue(line);
+            pendingRecordBytes += line.Length + 1;
+            // Bound memory while the server is down; oldest records go first.
+            while (pendingRecordBytes > MaxBufferedRecordBytes && pendingRecords.TryDequeue(out var dropped))
+            {
+                pendingRecordBytes -= dropped.Length + 1;
+                recordsDelivered++;
+            }
+        }
     }
 
     /// <summary>Upload one whole artefact (a capture, a struct dump) to the devlog server's
@@ -144,50 +235,143 @@ public sealed class DevTelemetry : IDisposable
         return $"{origin}/file?{(existingQuery.Length > 0 ? existingQuery + "&" : "")}{suffix}";
     }
 
-    /// <param name="force">Ignore the post-failure backoff. Used on dispose, where
-    /// this is the last chance to deliver whatever is buffered.</param>
+    /// <summary>The <c>/records</c> URL on the configured <c>/log</c> URL's origin, keeping its
+    /// query string for the same attribution <see cref="FileUrl"/> keeps.</summary>
+    private static string RecordsUrl(string logUrl)
+    {
+        var uri = new Uri(logUrl);
+        return $"{uri.GetLeftPart(UriPartial.Authority)}/records{uri.Query}";
+    }
+
+    /// <param name="force">Ignore the post-failure backoff and wait for a flush already in
+    /// flight. Used on dispose, where this is the last chance to deliver whatever is buffered,
+    /// including a record queued just before it.</param>
     private void Flush(bool force = false)
     {
         if (!Active) return;
-        if (!force && Environment.TickCount64 < Volatile.Read(ref backoffUntilTick)) return;
         // The timer fires on a pool thread and a POST can outlive its period, so
         // two flushes can overlap. Skipping the second keeps the batch in order.
-        if (!Monitor.TryEnter(flushGate)) return;
+        if (force) Monitor.Enter(flushGate);
+        else if (!Monitor.TryEnter(flushGate)) return;
         try
         {
-            while (queue.TryDequeue(out var l)) pending.Add(l);
-            if (pending.Count == 0) return;
-            int excess = pending.Count - MaxBufferedLines;
-            if (excess > 0) pending.RemoveRange(0, excess);
-
-            var sb = new StringBuilder();
-            foreach (var l in pending) sb.Append(l).Append('\n');
-            int count = pending.Count;
-            try
-            {
-                using var content = new StringContent(sb.ToString(), Encoding.UTF8, "text/plain");
-                using var req = new HttpRequestMessage(HttpMethod.Post, url()) { Content = content };
-                req.Headers.TryAddWithoutValidation("X-Devlog-Session", session);
-                req.Headers.TryAddWithoutValidation("X-Devlog-Offset", delivered.ToString(CultureInfo.InvariantCulture));
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                using var resp = http.SendAsync(req, cts.Token).GetAwaiter().GetResult();
-                resp.EnsureSuccessStatusCode();
-                delivered += count;
-                pending.Clear();
-            }
-            catch (Exception e)
-            {
-                // Keep the batch for the next attempt, and stop retrying every
-                // second: the lines that explain why the sink went down are the
-                // ones least worth dropping, and a dead endpoint costs a 3s
-                // timeout per attempt.
-                Volatile.Write(ref backoffUntilTick, Environment.TickCount64 + FailureBackoffMs);
-                onError?.Invoke(e.Message);
-            }
+            // Each channel is drained and posted on its own, so a failing endpoint only costs
+            // the other one the time the failed post took.
+            FlushLines(force);
+            FlushRecords(force);
         }
         finally
         {
             Monitor.Exit(flushGate);
+        }
+    }
+
+    /// <summary>Posts the plain lines to <c>/log</c>. Caller holds <see cref="flushGate"/>.</summary>
+    private void FlushLines(bool force)
+    {
+        if (!force && Environment.TickCount64 < Volatile.Read(ref backoffUntilTick)) return;
+        while (queue.TryDequeue(out var l)) pending.Add(l);
+        if (pending.Count == 0) return;
+        int excess = pending.Count - MaxBufferedLines;
+        if (excess > 0)
+        {
+            // A dropped line still holds its stream position: after a post the server stored but
+            // the client scored as failed, the retry's offset must still skip what the server holds.
+            pending.RemoveRange(0, excess);
+            delivered += excess;
+        }
+
+        var sb = new StringBuilder();
+        foreach (var l in pending) sb.Append(l).Append('\n');
+        int count = pending.Count;
+        try
+        {
+            using var content = new StringContent(sb.ToString(), Encoding.UTF8, "text/plain");
+            using var req = new HttpRequestMessage(HttpMethod.Post, url()) { Content = content };
+            req.Headers.TryAddWithoutValidation("X-Devlog-Session", session);
+            req.Headers.TryAddWithoutValidation("X-Devlog-Offset", delivered.ToString(CultureInfo.InvariantCulture));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var resp = http.SendAsync(req, cts.Token).GetAwaiter().GetResult();
+            resp.EnsureSuccessStatusCode();
+            delivered += count;
+            pending.Clear();
+        }
+        catch (Exception e)
+        {
+            // Keep the batch for the next attempt, and stop retrying every
+            // second: the lines that explain why the sink went down are the
+            // ones least worth dropping, and a dead endpoint costs a 3s
+            // timeout per attempt.
+            Volatile.Write(ref backoffUntilTick, Environment.TickCount64 + FailureBackoffMs);
+            onError?.Invoke(e.Message);
+        }
+    }
+
+    /// <summary>Posts the buffered records to <c>/records</c> in chunks of at most
+    /// <see cref="MaxRecordPostBytes"/> (a single larger record goes alone), until none are left or
+    /// a post fails. Caller holds <see cref="flushGate"/>.</summary>
+    private void FlushRecords(bool force)
+    {
+        if (!force && Environment.TickCount64 < recordsBackoffUntilTick) return;
+        var chunk = new List<byte[]>();
+        while (true)
+        {
+            chunk.Clear();
+            long offset;
+            int size = 0;
+            lock (recordsGate)
+            {
+                if (pendingRecords.Count == 0) return;
+                offset = recordsDelivered;
+                foreach (var line in pendingRecords)
+                {
+                    if (chunk.Count > 0 && size + line.Length + 1 > MaxRecordPostBytes) break;
+                    chunk.Add(line);
+                    size += line.Length + 1;
+                }
+            }
+
+            var body = new byte[size];
+            int at = 0;
+            foreach (var line in chunk)
+            {
+                line.CopyTo(body, at);
+                at += line.Length;
+                body[at++] = (byte)'\n';
+            }
+
+            try
+            {
+                using var content = new ByteArrayContent(body);
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/x-ndjson");
+                using var req = new HttpRequestMessage(HttpMethod.Post, RecordsUrl(url()!)) { Content = content };
+                // The server keys its dedupe offsets by session, and /log already uses the bare id
+                // for the plain line stream, so the record stream needs an id of its own.
+                req.Headers.TryAddWithoutValidation("X-Devlog-Session", session + "-r");
+                req.Headers.TryAddWithoutValidation("X-Devlog-Offset", offset.ToString(CultureInfo.InvariantCulture));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                using var resp = http.SendAsync(req, cts.Token).GetAwaiter().GetResult();
+                resp.EnsureSuccessStatusCode();
+            }
+            catch (Exception e)
+            {
+                // Same reasoning as the /log channel: keep the records, back off, retry later.
+                recordsBackoffUntilTick = Environment.TickCount64 + FailureBackoffMs;
+                onError?.Invoke(e.Message);
+                return;
+            }
+
+            // Records dropped by the cap during the post already advanced recordsDelivered, so only
+            // the part of this chunk still at the head is removed.
+            var end = offset + chunk.Count;
+            lock (recordsGate)
+            {
+                while (recordsDelivered < end && pendingRecords.TryDequeue(out var sent))
+                {
+                    pendingRecordBytes -= sent.Length + 1;
+                    recordsDelivered++;
+                }
+            }
         }
     }
 

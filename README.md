@@ -112,6 +112,50 @@ var path = await Telemetry.UploadFileAsync("capture", "json", bytes);
 - The server caps bodies at `MAX_DUMP_BYTES` (8 MB by default), so callers should check `bytes.Length`
   before calling rather than rely on the resulting `HttpRequestException`.
 
+### Structured records
+
+`Record` queues one JSON object per event, for traces you filter rather than read top to bottom:
+
+```csharp
+Telemetry.Record("callback", new Dictionary<string, object?>
+{
+    ["addon"] = "ItemSearch",
+    ["values"] = new[] { 2, 0 },
+    ["round"] = 3,
+});
+```
+
+Each record starts with five keys the plugin cannot set: `ts` (local time with offset, invariant
+culture), `src` (the source name passed to the constructor), `session` (`Telemetry.Session`, one id
+per `DevTelemetry` instance), `seq` (1, 2, … per instance) and `kind`. The fields follow in their
+dictionary order, serialised by `System.Text.Json` from their runtime types. A field named `ts`,
+`src`, `session`, `seq` or `kind` throws `ArgumentException`, because those are what every filter
+keys on. Like `Log`, `Record` does nothing while telemetry is inactive.
+
+Records travel on their own channel: `POST /records` on the `/log` URL's origin, with the `/log`
+URL's query string (so `client=` still applies) and their own session and offset headers, so a
+retried batch lands once. A failing `/log` never holds records back, and a failing `/records` never
+holds log lines back. `Dispose` waits for a flush already in flight and then delivers what is left,
+so a last record queued just before it still arrives.
+
+The server appends them to `records.jsonl` beside `live.log` (`RECORDSFILE` to override), one
+compact object per line, and rotates it to `records.jsonl.1` past `MAX_BYTES` exactly as it rotates
+the log. It adds `client` (the sender's label) and `rx` (its receive time) when the record lacks
+them. A line that is not a JSON object is kept as `{"kind":"invalid", …, "raw": "<line>"}`.
+`GET /records?n=200` serves the tail. `python3 test_devlog_records.py` covers the endpoint.
+
+While the server is unreachable, records queue up to 16 MiB of UTF-8, counted in bytes, and the
+oldest go first. Posts are cut at 1 MiB each, so a large backlog drains in several requests that
+each fit the 3 s timeout.
+
+```bash
+jq -c 'select(.src=="UiCapture" and .session=="<id>" and .round==3)' ~/.cache/zhyra-devlog/records.jsonl
+jq -c 'select(.kind=="callback")' ~/.cache/zhyra-devlog/records.jsonl
+```
+
+`DevTelemetryTests` in `XivHubPluginKit.Tests` covers the client side:
+`DOTNET_ROOT=~/.dotnet ~/.dotnet/dotnet test XivHubPluginKit.Tests/XivHubPluginKit.Tests.csproj`.
+
 ## PluginPresence — cached "is that plugin loaded?"
 
 `DalamudReflector.TryGetDalamudPlugin` with `ignoreCache` walks Dalamud's entire installed-plugin

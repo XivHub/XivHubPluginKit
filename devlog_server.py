@@ -10,10 +10,24 @@ real time. Binds the LAN so the game client on another machine can reach it.
 
 Point the plugin's dev-log URL at  http://<this-box-LAN-ip>:<port>/log
 Read it back in a browser at the same address (?n=200 for the last 200 lines).
+
+Endpoints:
+  POST /log      plain lines -> LOGFILE, each prefixed with the sender's label
+  POST /records  JSON lines (DevTelemetry.Record) -> RECORDSFILE (default records.jsonl beside
+                 LOGFILE), one compact object per line; "client" and "rx" (receive time) are added
+                 when absent, and a line that is not a JSON object is kept as kind "invalid"
+  POST /file     one whole artefact -> DUMPDIR
+  GET  /log, /   tail of LOGFILE (?n=, default 500, 0 = all)
+  GET  /records  tail of RECORDSFILE (?n=, default 500, 0 = all)
+  GET  /health
+
+/log and /records dedupe retried batches by X-Devlog-Session and X-Devlog-Offset, and both files
+rotate to <name>.1 past MAX_BYTES.
 NOT for public exposure — no auth, plain HTTP, local network only.
 """
 import datetime
 import http.server
+import json
 import os
 import pathlib
 import re
@@ -28,16 +42,18 @@ LOGFILE = pathlib.Path(os.environ.get("LOGFILE", pathlib.Path.home() / ".cache" 
 LOGFILE.parent.mkdir(parents=True, exist_ok=True)
 # Bound disk use: rotate live.log -> live.log.1 past MAX_BYTES (keeps one old file). Generous default.
 MAX_BYTES = int(os.environ.get("MAX_BYTES", str(25 * 1024 * 1024)))
+# Structured records (JSON lines), kept apart from live.log so jq can read the file whole.
+RECORDSFILE = pathlib.Path(os.environ.get("RECORDSFILE", LOGFILE.parent / "records.jsonl"))
 # Whole artefacts (addon dumps, captures) land here as discrete files rather than as log lines, so
 # one dump stays one readable unit instead of interleaving with whatever else is logging.
 DUMPDIR = pathlib.Path(os.environ.get("DUMPDIR", LOGFILE.parent / "dumps"))
 MAX_DUMP_BYTES = int(os.environ.get("MAX_DUMP_BYTES", str(8 * 1024 * 1024)))
 
 
-def _rotate_if_needed():
+def _rotate_if_needed(path=LOGFILE):
     try:
-        if LOGFILE.exists() and LOGFILE.stat().st_size >= MAX_BYTES:
-            LOGFILE.replace(LOGFILE.with_suffix(LOGFILE.suffix + ".1"))
+        if path.exists() and path.stat().st_size >= MAX_BYTES:
+            path.replace(path.with_suffix(path.suffix + ".1"))
     except OSError:
         pass
 
@@ -68,6 +84,36 @@ def _new_lines(session, offset, lines):
     while len(_stream_offsets) > MAX_TRACKED_STREAMS:
         del _stream_offsets[next(iter(_stream_offsets))]
     return lines[min(max(written - offset, 0), len(lines)):]
+
+
+def _record(line, client, rx):
+    """One stored record for one received line.
+
+    A JSON object keeps every key it arrived with; client and rx fill in only when absent, so a
+    record forwarded from another server keeps its original sender and time. Anything else is kept
+    whole under "raw" rather than dropped, since a malformed line is itself a bug worth seeing.
+    """
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        rec = None
+    if not isinstance(rec, dict):
+        return {"kind": "invalid", "client": client, "rx": rx, "raw": line}
+    rec.setdefault("client", client)
+    rec.setdefault("rx", rx)
+    return rec
+
+
+def _json_lines(body):
+    """Split an NDJSON body on newlines only.
+
+    str.splitlines also breaks on U+2028, U+0085 and friends, which JSON strings may hold
+    unescaped; splitting there would cut a record in two and shift every offset after it.
+    """
+    lines = body.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
 
 
 def _client_label(addr, override=None):
@@ -102,15 +148,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         if path.rstrip("/") == "/file":
             return self._save_file(query)
+        if path.rstrip("/") == "/records":
+            return self._save_records(query)
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8", "replace")
         params = urllib.parse.parse_qs(query)
         client = _client_label(self.client_address[0], params.get("client", [""])[0])
-        session = self.headers.get("X-Devlog-Session", "")
-        try:
-            offset = int(self.headers.get("X-Devlog-Offset", "-1"))
-        except ValueError:
-            offset = -1
+        session, offset = self._stream_position()
 
         with _write_lock:
             lines = _new_lines(session, offset, body.splitlines())
@@ -123,6 +167,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     f.write(body)
                 sys.stdout.write(body)
                 sys.stdout.flush()
+        self.send_response(204)
+        self.end_headers()
+
+    def _stream_position(self):
+        """The batch's (session, offset) pair; offset -1 marks a client that sent none."""
+        session = self.headers.get("X-Devlog-Session", "")
+        try:
+            offset = int(self.headers.get("X-Devlog-Offset", "-1"))
+        except ValueError:
+            offset = -1
+        return session, offset
+
+    def _save_records(self, query):
+        """Append a batch of JSON lines to RECORDSFILE, skipping what a retry already delivered."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode("utf-8", "replace")
+        params = urllib.parse.parse_qs(query)
+        client = _client_label(self.client_address[0], params.get("client", [""])[0])
+        session, offset = self._stream_position()
+        rx = datetime.datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+        with _write_lock:
+            lines = _new_lines(session, offset, _json_lines(body))
+            out = "".join(json.dumps(_record(line, client, rx), ensure_ascii=False, separators=(",", ":")) + "\n"
+                          for line in lines)
+            if out:
+                _rotate_if_needed(RECORDSFILE)
+                with open(RECORDSFILE, "a", encoding="utf-8") as f:
+                    f.write(out)
         self.send_response(204)
         self.end_headers()
 
@@ -159,16 +232,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._text(200, str(target) + "\n")
 
     def do_GET(self):
-        """Serve the tail of the log, so it can be read from a browser.
-
-        Only the POST side of this server was ever implemented, so every GET
-        answered "ok" and the log was readable only by opening the file on the
-        box it lands on. `?n=` sets how many lines (default 500, 0 = all).
+        """Serve the tail of the log, or of the records at /records, so either can be read from a
+        browser or piped to jq. `?n=` sets how many lines (default 500, 0 = all).
         """
         path, _, query = self.path.partition("?")
         if path.rstrip("/") == "/health":
             self._text(200, "zhyra-devlog ok\n")
             return
+        records = path.rstrip("/") == "/records"
 
         params = urllib.parse.parse_qs(query)
         try:
@@ -177,10 +248,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             n = 500
 
         try:
-            with open(LOGFILE, encoding="utf-8", errors="replace") as f:
+            with open(RECORDSFILE if records else LOGFILE, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
         except FileNotFoundError:
-            self._text(200, "(no log yet)\n")
+            # An empty body, not a placeholder line, so `curl .../records | jq` stays valid.
+            self._text(200, "" if records else "(no log yet)\n")
             return
         self._text(200, "".join(lines[-n:] if n > 0 else lines))
 
@@ -199,7 +271,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main():
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as srv:
-        print(f"zhyra-devlog listening on 0.0.0.0:{PORT} -> {LOGFILE}", flush=True)
+        print(f"zhyra-devlog listening on 0.0.0.0:{PORT} -> {LOGFILE}, {RECORDSFILE}", flush=True)
         try:
             srv.serve_forever()
         except KeyboardInterrupt:
