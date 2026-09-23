@@ -134,8 +134,9 @@ culture), `src` (the source name passed to the constructor), `session` (`Telemet
 per `DevTelemetry` instance), `seq` (1, 2, … per instance) and `kind`. The fields follow in their
 dictionary order, serialised by `System.Text.Json` from their runtime types, public fields included
 (so `Vector3` and value tuples keep their members). A field named `ts`, `src`, `session`, `seq` or
-`kind` throws `ArgumentException`, because those are what every filter keys on; nothing else throws,
-so `Record` is safe in a hook detour:
+`kind` is written with a trailing `_` (`kind_`) and reported to `onError`, because those are what
+every filter keys on; name such a field for what it is instead (`routeKind`). `Record` never
+throws, so it is safe in a hook detour and can't stop the feature it logs:
 
 - NaN and the infinities are written as `"NaN"`, `"Infinity"` and `"-Infinity"`; `nint` and `nuint`
   as `"0x…"`.

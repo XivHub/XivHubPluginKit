@@ -163,7 +163,7 @@ first.
 and the settings editor pick it up with no further edit:
 
 ```csharp
-new("color.tabSelectedOverline", "Tab Overline", "HubGold", ImGuiCol.TabSelectedOverline),
+new("color.tableHeaderBg", "Table Header Background", "HubTableHead", ImGuiCol.TableHeaderBg),
 ```
 
 Point it at an existing palette name and set `Alpha` if it needs one. Add a
@@ -181,6 +181,16 @@ action stand out, use gold's strengths above instead of a lighter surface.
 `Primary()` is the example — goes in `HubStyle` as an `IDisposable` scope that
 pushes and pops a matched count. Never leave a push unbalanced across a
 `return`; use `using`.
+
+**Tables and tabs.** Dalamud's ImGui binding is older than ImGui's tab overline, so the selected
+tab shows through `color.tabActive` alone.
+- Give fixed columns no pixel width (`WidthFixed` with no size): ImGui then fits them to their
+  header and contents every frame until the user drags one. A pixel width clips at larger numbers
+  and font scales. Keep one `WidthStretch` column for the name.
+- Pass `ImGuiTableFlags.NoSavedSettings` on data tables. ImGui saves column widths by position, so a
+  table that gains a column loads the old first column's width into the new one.
+- Pass `ImGuiTabBarFlags.FittingPolicyScroll` to a tab bar that can outgrow its window, so tabs
+  scroll instead of being cut to "Retain…".
 
 **Text.** No "…" (U+2026) anywhere in UI text, labels, status lines or tooltips: the game font
 draws it as three centred dots, which reads as a glitch. End a status line with a full stop, and
