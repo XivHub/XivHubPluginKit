@@ -182,6 +182,10 @@ action stand out, use gold's strengths above instead of a lighter surface.
 pushes and pops a matched count. Never leave a push unbalanced across a
 `return`; use `using`.
 
+**Labels.** No "…" (U+2026) in a button, tab, header or slider label: the game font draws it
+as three centred dots, which reads as a glitch. A button that opens a window is named for the
+window ("Shopping plan", "Buy from servant"). Tooltips and body text may use it.
+
 **What not to do.** Do not push a raw colour at a call site, do not read
 `ImGui.GetStyle()` and patch it in place, and do not add a per-plugin theme
 setting — a plugin that needs to look different from the family is a design
