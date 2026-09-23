@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 TMP = pathlib.Path(tempfile.mkdtemp(prefix="devlog-records-test-"))
@@ -30,8 +31,14 @@ def post(path, body, session=None, offset=None):
     req = urllib.request.Request(f"{BASE}{path}?client=testbox", data=body.encode(), method="POST")
     if session is not None: req.add_header("X-Devlog-Session", session)
     if offset is not None: req.add_header("X-Devlog-Offset", str(offset))
-    with urllib.request.urlopen(req, timeout=5) as r:
-        return r.status
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except OSError:
+        # The server dropped the connection without answering.
+        return None
 
 
 def get(path):
@@ -39,8 +46,17 @@ def get(path):
         return r.read().decode()
 
 
+def strict_loads(line):
+    """json.loads that refuses NaN and Infinity, which are not JSON and break jq."""
+    def refuse(name):
+        raise ValueError(f"non-JSON constant {name}")
+    return json.loads(line, parse_constant=refuse)
+
+
 def records():
-    return [json.loads(l) for l in RECORDS.read_text(encoding="utf-8").splitlines()] if RECORDS.exists() else []
+    # Split on "\n" only: a stored string may hold U+2028 unescaped, which str.splitlines would cut.
+    text = RECORDS.read_bytes().decode("utf-8") if RECORDS.exists() else ""
+    return [strict_loads(l) for l in text.split("\n")[:-1]]
 
 
 failures = []
@@ -96,9 +112,45 @@ try:
     log_lines = LOG.read_text(encoding="utf-8").splitlines()
     check("/log post reaches live.log", log_lines, ["testbox plain line"])
 
+    # A line split only on "\n": U+2028 and U+0085 inside a string stay in the record, and the
+    # next batch's offset lines up.
+    before = len(records())
+    post("/records", '{"s":"a\u2028b\u0085c"}\n{"n":2}\n', "sess5-r", 0)
+    post("/records", '{"n":3}\n', "sess5-r", 2)
+    check("records split on \\n only", [strip(r) for r in records()[before:]],
+          [{"s": "a\u2028b\u0085c"}, {"n": 2}, {"n": 3}])
+
+    # Nesting past Python's recursion limit and NaN/Infinity are kept as invalid, and the file stays
+    # strict JSON.
+    before = len(records())
+    deep = "[" * 100_000 + "]" * 100_000
+    status = post("/records", f'{deep}\n{{"x":NaN}}\n{{"y":-Infinity}}\n', "sess6-r", 0)
+    check("deep and NaN lines are answered", status, 204)
+    bad = records()[before:]
+    check("deep and NaN lines become invalid", [(r.get("kind"), len(r.get("raw", ""))) for r in bad],
+          [("invalid", len(deep)), ("invalid", len('{"x":NaN}')), ("invalid", len('{"y":-Infinity}'))])
+
+    # A failed write must not move the offset: the retry of the whole batch still lands.
+    before = len(records())
+    RECORDS.chmod(0o444)
+    try:
+        status = post("/records", '{"k":1}\n{"k":2}\n', "sess7-r", 0)
+    finally:
+        RECORDS.chmod(0o644)
+    check("failed write answers 500", status, 500)
+    post("/records", '{"k":1}\n{"k":2}\n{"k":3}\n', "sess7-r", 0)
+    check("failed write keeps the offset", [r.get("k") for r in records()[before:]], [1, 2, 3])
+
     # GET /records serves the tail as JSON lines.
-    tail = [json.loads(l) for l in get("/records?n=2").splitlines()]
+    tail = [strict_loads(l) for l in get("/records?n=2").split("\n")[:-1]]
     check("GET /records?n=2 is the tail", tail, records()[-2:])
+
+    # An append caught halfway: the partial last line is left out until its newline arrives.
+    whole = get("/records?n=0")
+    with open(RECORDS, "a", encoding="utf-8") as f:
+        f.write('{"seq":99,"kind":"hal')
+    check("GET /records leaves out a partial last line", get("/records?n=0") == whole, True)
+    check("GET /records?n=1 leaves out a partial last line", get("/records?n=1"), whole.split("\n")[-2] + "\n")
 finally:
     srv.send_signal(signal.SIGINT)
     srv.wait(timeout=5)

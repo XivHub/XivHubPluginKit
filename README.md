@@ -55,7 +55,11 @@ Point the plugin's dev-log URL at `http://<this-box-LAN-ip>:9999/log`. Read the 
 A batch is appended before the response goes out, so a client that scores a stored POST as failed
 re-sends it. Each batch therefore carries `X-Devlog-Session` (one id per plugin run) and
 `X-Devlog-Offset` (where the batch starts in that run's line stream), and the server writes only
-the part past what it already holds. A client that sends neither is written verbatim.
+the part past what it already holds. Both sides count lines by `\n` alone, so a line may hold `\r`,
+U+2028 or any other character `str.splitlines` would break on; `Log` itself queues a message holding
+`\n` as one prefixed line per part. The server moves a stream's offset only once the write has
+succeeded, and answers a failed write with `500`, so the retry still lands. It tracks the 256 most
+recently used streams. A client that sends neither header is written verbatim.
 `python3 test_devlog_server.py` covers the retry cases.
 
 ### Several machines, one log
@@ -128,29 +132,49 @@ Telemetry.Record("callback", new Dictionary<string, object?>
 Each record starts with five keys the plugin cannot set: `ts` (local time with offset, invariant
 culture), `src` (the source name passed to the constructor), `session` (`Telemetry.Session`, one id
 per `DevTelemetry` instance), `seq` (1, 2, … per instance) and `kind`. The fields follow in their
-dictionary order, serialised by `System.Text.Json` from their runtime types. A field named `ts`,
-`src`, `session`, `seq` or `kind` throws `ArgumentException`, because those are what every filter
-keys on. Like `Log`, `Record` does nothing while telemetry is inactive.
+dictionary order, serialised by `System.Text.Json` from their runtime types, public fields included
+(so `Vector3` and value tuples keep their members). A field named `ts`, `src`, `session`, `seq` or
+`kind` throws `ArgumentException`, because those are what every filter keys on; nothing else throws,
+so `Record` is safe in a hook detour:
+
+- NaN and the infinities are written as `"NaN"`, `"Infinity"` and `"-Infinity"`; `nint` and `nuint`
+  as `"0x…"`.
+- A value that still cannot be serialised (a cycle, nesting past 64, a throwing getter, a delegate)
+  becomes the string `"!{ExceptionType}: {message}"`, and the rest of the record is kept.
+- A null dictionary counts as empty. A dictionary that throws while being enumerated drops the
+  record, reports it to `onError`, and uses no `seq`.
+- A record over 1 MiB is replaced by `{…, "kind":"oversize", "bytes": N, "of": "<kind>"}` with the
+  same `seq`.
+
+Like `Log`, `Record` does nothing while telemetry is inactive or after `Dispose`.
 
 Records travel on their own channel: `POST /records` on the `/log` URL's origin, with the `/log`
 URL's query string (so `client=` still applies) and their own session and offset headers, so a
 retried batch lands once. A failing `/log` never holds records back, and a failing `/records` never
-holds log lines back. `Dispose` waits for a flush already in flight and then delivers what is left,
-so a last record queued just before it still arrives.
+holds log lines back. `Dispose` aborts a flush already in flight, then delivers what is left on both
+channels, so a last record queued just before it still arrives. That final flush has 3 s in total,
+so a dead or stalled server delays plugin unload by at most that.
 
 The server appends them to `records.jsonl` beside `live.log` (`RECORDSFILE` to override), one
 compact object per line, and rotates it to `records.jsonl.1` past `MAX_BYTES` exactly as it rotates
 the log. It adds `client` (the sender's label) and `rx` (its receive time) when the record lacks
-them. A line that is not a JSON object is kept as `{"kind":"invalid", …, "raw": "<line>"}`.
-`GET /records?n=200` serves the tail. `python3 test_devlog_records.py` covers the endpoint.
+them. A line that is not a JSON object is kept as `{"kind":"invalid", …, "raw": "<line>"}`, as is
+one nested too deep to parse or holding `NaN` or `Infinity`, so every line of the file is strict
+JSON. `GET /records?n=200` serves the tail, leaving out a last line still being written.
+`python3 test_devlog_records.py` covers the endpoint.
 
 While the server is unreachable, records queue up to 16 MiB of UTF-8, counted in bytes, and the
 oldest go first. Posts are cut at 1 MiB each, so a large backlog drains in several requests that
-each fit the 3 s timeout.
+each fit the 3 s timeout. A flush posts only the records queued when it started, so a steady stream
+of new ones never keeps the log lines waiting.
+
+Read the rotated file first so the output stays in order. Until the first rotation
+`records.jsonl.1` does not exist; jq then reports it missing, reads `records.jsonl` anyway, and
+exits 2.
 
 ```bash
-jq -c 'select(.src=="UiCapture" and .session=="<id>" and .round==3)' ~/.cache/zhyra-devlog/records.jsonl
-jq -c 'select(.kind=="callback")' ~/.cache/zhyra-devlog/records.jsonl
+jq -c 'select(.src=="UiCapture" and .session=="<id>" and .round==3)' ~/.cache/zhyra-devlog/records.jsonl.1 ~/.cache/zhyra-devlog/records.jsonl
+jq -c 'select(.kind=="callback")' ~/.cache/zhyra-devlog/records.jsonl.1 ~/.cache/zhyra-devlog/records.jsonl
 ```
 
 `DevTelemetryTests` in `XivHubPluginKit.Tests` covers the client side:

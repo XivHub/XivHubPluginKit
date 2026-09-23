@@ -21,8 +21,8 @@ Endpoints:
   GET  /records  tail of RECORDSFILE (?n=, default 500, 0 = all)
   GET  /health
 
-/log and /records dedupe retried batches by X-Devlog-Session and X-Devlog-Offset, and both files
-rotate to <name>.1 past MAX_BYTES.
+/log and /records split a body on "\n" only, dedupe retried batches by X-Devlog-Session and
+X-Devlog-Offset, and both files rotate to <name>.1 past MAX_BYTES.
 NOT for public exposure — no auth, plain HTTP, local network only.
 """
 import datetime
@@ -64,51 +64,84 @@ _client_names = {}
 # sends with every batch. A batch is appended before the response goes out and the connection is
 # closed after it, so a client can score a stored batch as failed and re-send it; without this it
 # would land again. Guarded by _write_lock together with the append it authorises, so a duplicate
-# check and its write cannot interleave with another thread's.
+# check and its write cannot interleave with another thread's. Insertion order is recency order
+# (_commit_offset re-inserts on every use), so eviction drops the stream idle longest. Each
+# DevTelemetry instance has two streams (<id> and <id>-r) and a plugin reload makes a new instance.
 _stream_offsets = {}
 _write_lock = threading.Lock()
-MAX_TRACKED_STREAMS = 64
+MAX_TRACKED_STREAMS = 256
 
 
 def _new_lines(session, offset, lines):
-    """The tail of a batch that is not already on disk, and the bookkeeping for it.
+    """The tail of a batch that is not already on disk, and the stream offset once it is written.
 
     offset is where this batch starts in the session's line stream. The server has written up to
     some point in that stream; anything at or before it arrived on an earlier attempt. A client too
-    old to send the pair (offset < 0) is taken at its word and everything is written.
+    old to send the pair (offset < 0) is taken at its word: everything is written and the offset is
+    None. Nothing is recorded here; the caller commits the offset with _commit_offset only after
+    the write succeeds, so a failed write leaves the lines for the client's retry.
     """
     if not session or offset < 0:
-        return lines
+        return lines, None
     written = _stream_offsets.get(session, offset)
-    _stream_offsets[session] = max(written, offset + len(lines))
+    return lines[min(max(written - offset, 0), len(lines)):], max(written, offset + len(lines))
+
+
+def _commit_offset(session, new_offset):
+    """Record that the session's stream is on disk up to new_offset, and mark it most recently used."""
+    if new_offset is None:
+        return
+    _stream_offsets.pop(session, None)
+    _stream_offsets[session] = new_offset
     while len(_stream_offsets) > MAX_TRACKED_STREAMS:
         del _stream_offsets[next(iter(_stream_offsets))]
-    return lines[min(max(written - offset, 0), len(lines)):]
 
 
-def _record(line, client, rx):
-    """One stored record for one received line.
+def _record_line(line, client, rx):
+    """The stored form of one received line: one compact JSON object, without the newline.
 
     A JSON object keeps every key it arrived with; client and rx fill in only when absent, so a
     record forwarded from another server keeps its original sender and time. Anything else is kept
-    whole under "raw" rather than dropped, since a malformed line is itself a bug worth seeing.
+    whole under "raw" rather than dropped, since a malformed line is itself a bug worth seeing. That
+    includes nesting too deep for the parser (RecursionError) and NaN or Infinity, which json.loads
+    accepts but which are not JSON, so writing them back would break every strict reader of the file.
     """
     try:
         rec = json.loads(line)
-    except ValueError:
-        rec = None
-    if not isinstance(rec, dict):
-        return {"kind": "invalid", "client": client, "rx": rx, "raw": line}
-    rec.setdefault("client", client)
-    rec.setdefault("rx", rx)
-    return rec
+        if isinstance(rec, dict):
+            rec.setdefault("client", client)
+            rec.setdefault("rx", rx)
+            return json.dumps(rec, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except (ValueError, RecursionError):
+        pass
+    return json.dumps({"kind": "invalid", "client": client, "rx": rx, "raw": line},
+                      ensure_ascii=False, separators=(",", ":"))
 
 
-def _json_lines(body):
-    """Split an NDJSON body on newlines only.
+def _append(path, text, session, new_offset):
+    """Append text to path, then commit the stream offset; the OSError, if the write failed.
 
-    str.splitlines also breaks on U+2028, U+0085 and friends, which JSON strings may hold
-    unescaped; splitting there would cut a record in two and shift every offset after it.
+    Caller holds _write_lock. The offset moves only once the write has succeeded: after a failed
+    write the client re-sends from its old offset, and the lines it re-sends are still new here.
+    """
+    if text:
+        try:
+            _rotate_if_needed(path)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            return e
+    _commit_offset(session, new_offset)
+    return None
+
+
+def _split_lines(body):
+    """Split a /log or /records body on "\n" only, dropping one trailing "\r" per line.
+
+    DevTelemetry gives each "\n"-terminated line one stream position, and dedupe compares those
+    positions, so the server must count lines the same way. str.splitlines also breaks on "\r",
+    "\x0b", "\x0c", "\x1c"-"\x1e", U+0085, U+2028 and U+2029, which a log line or a JSON string may
+    hold; splitting there would cut a line in two and shift every offset after it.
     """
     lines = body.split("\n")
     if lines and lines[-1] == "":
@@ -157,16 +190,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         session, offset = self._stream_position()
 
         with _write_lock:
-            lines = _new_lines(session, offset, body.splitlines())
+            lines, new_offset = _new_lines(session, offset, _split_lines(body))
             # Every line carries its sender: several machines share one log, and a line that cannot
             # be attributed is worse than no line when two people are reproducing the same bug.
             body = "".join(f"{client} {line}\n" for line in lines)
-            if body:
-                _rotate_if_needed()
-                with open(LOGFILE, "a", encoding="utf-8") as f:
-                    f.write(body)
+            error = _append(LOGFILE, body, session, new_offset)
+            if body and not error:
                 sys.stdout.write(body)
                 sys.stdout.flush()
+        self._stored(error)
+
+    def _stored(self, error):
+        """Answer a /log or /records post: 204, or 500 so the client keeps the batch and retries."""
+        if error:
+            return self._text(500, f"write failed: {error}\n")
         self.send_response(204)
         self.end_headers()
 
@@ -189,15 +226,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         rx = datetime.datetime.now().astimezone().isoformat(timespec="milliseconds")
 
         with _write_lock:
-            lines = _new_lines(session, offset, _json_lines(body))
-            out = "".join(json.dumps(_record(line, client, rx), ensure_ascii=False, separators=(",", ":")) + "\n"
-                          for line in lines)
-            if out:
-                _rotate_if_needed(RECORDSFILE)
-                with open(RECORDSFILE, "a", encoding="utf-8") as f:
-                    f.write(out)
-        self.send_response(204)
-        self.end_headers()
+            lines, new_offset = _new_lines(session, offset, _split_lines(body))
+            out = "".join(_record_line(line, client, rx) + "\n" for line in lines)
+            error = _append(RECORDSFILE, out, session, new_offset)
+        self._stored(error)
 
     def _save_file(self, query):
         """Store one POSTed artefact under DUMPDIR and answer with the path it landed at."""
@@ -254,6 +286,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # An empty body, not a placeholder line, so `curl .../records | jq` stays valid.
             self._text(200, "" if records else "(no log yet)\n")
             return
+        # This read does not take _write_lock, so it can catch an append halfway; a record without
+        # its newline is not yet whole and would break jq.
+        if records and lines and not lines[-1].endswith("\n"):
+            lines.pop()
         self._text(200, "".join(lines[-n:] if n > 0 else lines))
 
     def _text(self, code, body):

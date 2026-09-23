@@ -1,7 +1,10 @@
+using System.Collections;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -50,8 +53,8 @@ public sealed class DevTelemetryTests
         var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
         if (flushInFlight)
         {
-            // The timer's flush is stuck in its /log post when Dispose starts, so Dispose must wait
-            // for it rather than skip, and then post the record.
+            // The timer's flush is stuck in its /log post when Dispose starts, so Dispose must abort
+            // it rather than skip the final flush, and then post the record.
             server.LogDelayMs = 1500;
             Assert.True(SpinWait.SpinUntil(() => server.Received("/log") > 0, Wait));
         }
@@ -193,6 +196,326 @@ public sealed class DevTelemetryTests
         Assert.EndsWith("line 0", post.Lines.First());
     }
 
+    [Fact]
+    public void DisposeIsBoundedWhenTheEndpointStalls()
+    {
+        using var server = new FakeDevlog { LogDelayMs = 60_000, RecordsDelayMs = 60_000 };
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
+
+        // The timer's flush is stuck in its /log post, and a record waits behind it.
+        Assert.True(SpinWait.SpinUntil(() => server.Received("/log") > 0, Wait));
+        t.Record("last", new Dictionary<string, object?>());
+
+        var clock = Stopwatch.StartNew();
+        t.Dispose();
+        clock.Stop();
+
+        // The flush in flight aborts at once, and the final flush of both channels shares one 3 s budget.
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(3.5), $"Dispose took {clock.Elapsed}");
+    }
+
+    private sealed class Node
+    {
+        public Node? Next;
+    }
+
+    private sealed class Throws
+    {
+        public int Value => throw new InvalidOperationException("boom");
+    }
+
+    [Fact]
+    public void RecordSerialisesAnyValueWithoutThrowing()
+    {
+        using var server = new FakeDevlog();
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
+        var cycle = new Node();
+        cycle.Next = cycle;
+        object deep = 1;
+        for (int i = 0; i < 100; i++) deep = new[] { deep };
+
+        t.Record("floats", new Dictionary<string, object?>
+        {
+            ["nan"] = double.NaN,
+            ["inf"] = double.PositiveInfinity,
+            ["ninf"] = double.NegativeInfinity,
+            ["fnan"] = float.NaN,
+        });
+        t.Record("structs", new Dictionary<string, object?>
+        {
+            ["ptr"] = (nint)0x1A2B,
+            ["uptr"] = (nuint)0xFF,
+            ["vec"] = new Vector3(1, 2, 3),
+            ["tuple"] = (7, "a"),
+        });
+        t.Record("broken", new Dictionary<string, object?>
+        {
+            ["cycle"] = cycle,
+            ["deep"] = deep,
+            ["getter"] = new Throws(),
+            ["action"] = (Action)(() => { }),
+            ["ok"] = 5,
+        });
+        t.Record("nulls", null!);
+        t.Dispose();
+
+        var r = server.Records();
+        Assert.Equal([1L, 2L, 3L, 4L], r.Select(x => x.GetProperty("seq").GetInt64()));
+
+        Assert.Equal("NaN", r[0].GetProperty("nan").GetString());
+        Assert.Equal("Infinity", r[0].GetProperty("inf").GetString());
+        Assert.Equal("-Infinity", r[0].GetProperty("ninf").GetString());
+        Assert.Equal("NaN", r[0].GetProperty("fnan").GetString());
+
+        Assert.Equal("0x1A2B", r[1].GetProperty("ptr").GetString());
+        Assert.Equal("0xFF", r[1].GetProperty("uptr").GetString());
+        Assert.Equal("""{"X":1,"Y":2,"Z":3}""", r[1].GetProperty("vec").GetRawText());
+        Assert.Equal("""{"Item1":7,"Item2":"a"}""", r[1].GetProperty("tuple").GetRawText());
+
+        Assert.StartsWith("!JsonException: ", r[2].GetProperty("cycle").GetString());
+        Assert.StartsWith("!JsonException: ", r[2].GetProperty("deep").GetString());
+        Assert.Equal("!InvalidOperationException: boom", r[2].GetProperty("getter").GetString());
+        Assert.StartsWith("!NotSupportedException: ", r[2].GetProperty("action").GetString());
+        Assert.Equal(5, r[2].GetProperty("ok").GetInt32());
+
+        Assert.Equal("nulls", r[3].GetProperty("kind").GetString());
+        Assert.Equal(["ts", "src", "session", "seq", "kind"], r[3].EnumerateObject().Select(p => p.Name));
+    }
+
+    /// <summary>Yields one entry, then throws, as a dictionary mutated on another thread does.</summary>
+    private sealed class FailingFields : IReadOnlyDictionary<string, object?>
+    {
+        public object? this[string key] => throw new KeyNotFoundException();
+        public IEnumerable<string> Keys => this.Select(p => p.Key);
+        public IEnumerable<object?> Values => this.Select(p => p.Value);
+        public int Count => 1;
+        public bool ContainsKey(string key) => false;
+        public bool TryGetValue(string key, out object? value) => throw new KeyNotFoundException();
+        public IEnumerator<KeyValuePair<string, object?>> GetEnumerator()
+        {
+            yield return new("a", 1);
+            throw new InvalidOperationException("Collection was modified");
+        }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    [Fact]
+    public void RecordThatCannotBeReadIsDroppedWithoutUsingASeq()
+    {
+        using var server = new FakeDevlog();
+        var errors = new ConcurrentQueue<string>();
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl, errors.Enqueue);
+
+        t.Record("before", new Dictionary<string, object?>());
+        t.Record("failing", new FailingFields());
+        t.Record("after", new Dictionary<string, object?>());
+        t.Dispose();
+
+        var r = server.Records();
+        Assert.Equal(["before", "after"], r.Select(x => x.GetProperty("kind").GetString()));
+        Assert.Equal([1L, 2L], r.Select(x => x.GetProperty("seq").GetInt64()));
+        Assert.Contains(errors, e => e.Contains("'failing'") && e.Contains("Collection was modified"));
+    }
+
+    [Fact]
+    public void MultiLineLogKeepsTheOffsetInStepWithTheServer()
+    {
+        using var server = new FakeDevlog();
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
+        Assert.True(SpinWait.SpinUntil(() => server.Posts("/log").Count > 0, Wait));
+
+        t.Log("one\ntwo\r\nthree\r");
+        Assert.True(SpinWait.SpinUntil(() => server.Posts("/log").Count > 1, Wait));
+        t.Log("four");
+        t.Dispose();
+
+        // The server gives each '\n'-terminated line one stream position, so each post must start
+        // where the previous one's lines end.
+        var posts = server.Posts("/log").OrderBy(p => long.Parse(p.Offset!, CultureInfo.InvariantCulture)).ToList();
+        for (int i = 1; i < posts.Count; i++)
+            Assert.Equal(long.Parse(posts[i - 1].Offset!, CultureInfo.InvariantCulture) + posts[i - 1].Text.Split('\n').Length - 1,
+                long.Parse(posts[i].Offset!, CultureInfo.InvariantCulture));
+
+        var lines = posts.SelectMany(p => p.Text.Split('\n')[..^1]).ToList();
+        Assert.All(lines, l => Assert.Matches(@"^[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} \[Test\] ", l));
+        Assert.Equal(["telemetry session started", "one", "two", "three", "four"], lines.Select(l => l[(l.IndexOf("] ", StringComparison.Ordinal) + 2)..]));
+    }
+
+    [Fact]
+    public async Task RecordsArrivingFasterThanTheyPostDoNotStarveTheLog()
+    {
+        using var server = new FakeDevlog { RecordsDelayMs = 50 };
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
+        Assert.True(SpinWait.SpinUntil(() => server.Posts("/log").Count > 0, Wait));
+
+        using var stop = new CancellationTokenSource();
+        var producer = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                t.Record("tick", new Dictionary<string, object?> { ["n"] = 1 });
+                Thread.Sleep(1);
+            }
+        });
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(() => server.Posts("/records").Count > 0, Wait));
+            t.Log("marker");
+            Assert.True(SpinWait.SpinUntil(() => server.Posts("/log").Any(p => p.Text.Contains("marker")), TimeSpan.FromSeconds(5)),
+                "the /log channel never got its turn");
+        }
+        finally
+        {
+            stop.Cancel();
+            await producer;
+            t.Dispose();
+        }
+    }
+
+    [Fact]
+    public void OversizeRecordBecomesAStub()
+    {
+        using var server = new FakeDevlog();
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
+        t.Record("small", new Dictionary<string, object?> { ["n"] = 1 });
+        t.Record("big", new Dictionary<string, object?> { ["blob"] = new string('x', 2 * OneMiB) });
+        t.Record("small", new Dictionary<string, object?> { ["n"] = 2 });
+        t.Dispose();
+
+        Assert.All(server.Posts("/records"), p => Assert.True(p.Body.Length <= OneMiB, $"{p.Body.Length} bytes"));
+        var r = server.Records();
+        Assert.Equal([1L, 2L, 3L], r.Select(x => x.GetProperty("seq").GetInt64()));
+        Assert.Equal("oversize", r[1].GetProperty("kind").GetString());
+        Assert.Equal("big", r[1].GetProperty("of").GetString());
+        Assert.InRange(r[1].GetProperty("bytes").GetInt64(), 2L * OneMiB, 2L * OneMiB + 200);
+        Assert.Equal(t.Session, r[1].GetProperty("session").GetString());
+        Assert.False(r[1].TryGetProperty("blob", out _));
+        Assert.Equal(2, r[2].GetProperty("n").GetInt32());
+    }
+
+    [Fact]
+    public void OnErrorThrowingOnTheTimerThreadIsContained()
+    {
+        using var server = new FakeDevlog { LogStatus = 500 };
+        int calls = 0;
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl, _ =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new InvalidOperationException("onError failed");
+        });
+
+        // An exception escaping a timer callback ends the process, test host included.
+        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref calls) > 0, Wait));
+        Thread.Sleep(500);
+        t.Record("after", new Dictionary<string, object?>());
+        t.Dispose();
+
+        Assert.Single(server.Records());
+    }
+
+    [Fact]
+    public void OnErrorThrowingInDisposeIsContained()
+    {
+        using var server = new FakeDevlog { LogStatus = 500 };
+        int testThread = Environment.CurrentManagedThreadId;
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl, _ =>
+        {
+            if (Environment.CurrentManagedThreadId == testThread) throw new InvalidOperationException("onError failed");
+        });
+        t.Record("last", new Dictionary<string, object?>());
+
+        // The failing /log post reports first; the record must still go out and Dispose return.
+        t.Dispose();
+
+        Assert.Single(server.Records());
+    }
+
+    [Fact]
+    public void ThrowingSettingsReadAsInactiveAndReportOnce()
+    {
+        using var server = new FakeDevlog();
+        var errors = new ConcurrentQueue<string>();
+        var t = new DevTelemetry("Test", () => throw new InvalidOperationException("config gone"), () => server.LogUrl,
+            errors.Enqueue);
+
+        Assert.False(t.Active);
+        t.Record("probe", new Dictionary<string, object?>());
+        t.Log("line");
+        // Let the timer read Active a few times; a throw there would end the test host.
+        Thread.Sleep(2500);
+        t.Dispose();
+
+        Assert.Empty(server.Records());
+        Assert.Single(errors, e => e.Contains("config gone"));
+    }
+
+    [Fact]
+    public void QueuedTimerFlushDoesNothingAfterDispose()
+    {
+        using var server = new FakeDevlog();
+        int testThread = Environment.CurrentManagedThreadId;
+        using var hold = new ManualResetEventSlim(true);
+        using var held = new ManualResetEventSlim(false);
+        bool on = true;
+        bool released = false;
+        int lateUrlReads = 0;
+        var errors = new ConcurrentQueue<string>();
+        var t = new DevTelemetry("Test", () => Environment.CurrentManagedThreadId != testThread || Volatile.Read(ref on), () =>
+        {
+            if (Environment.CurrentManagedThreadId != testThread)
+            {
+                if (Volatile.Read(ref released)) Interlocked.Increment(ref lateUrlReads);
+                else if (!hold.IsSet)
+                {
+                    held.Set();
+                    hold.Wait();
+                }
+            }
+            return server.LogUrl;
+        }, errors.Enqueue);
+        Assert.True(SpinWait.SpinUntil(() => server.Posts("/log").Count > 0, Wait));
+
+        // A timer flush is parked in its Active check, and so has not yet taken the flush gate.
+        hold.Reset();
+        Assert.True(held.Wait(Wait));
+        t.Log("queued");
+        // Toggled off, so Dispose's own flush leaves the line queued for the parked one to find.
+        Volatile.Write(ref on, false);
+        t.Dispose();
+        Volatile.Write(ref released, true);
+        hold.Set();
+        Thread.Sleep(1000);
+
+        // Reading url() again is the parked flush building a post for the disposed HttpClient.
+        Assert.Equal(0, Volatile.Read(ref lateUrlReads));
+        Assert.Empty(errors);
+        Assert.DoesNotContain(server.Posts("/log"), p => p.Text.Contains("queued"));
+    }
+
+    [Fact]
+    public void EntryPointsAreInertAfterDispose()
+    {
+        using var server = new FakeDevlog();
+        int testThread = Environment.CurrentManagedThreadId;
+        bool disposed = false;
+        int consulted = 0;
+        var t = new DevTelemetry("Test", () =>
+        {
+            if (Volatile.Read(ref disposed) && Environment.CurrentManagedThreadId == testThread) Interlocked.Increment(ref consulted);
+            return true;
+        }, () => server.LogUrl);
+        t.Dispose();
+        Volatile.Write(ref disposed, true);
+
+        bool built = false;
+        t.Log("late");
+        t.Record("late", new Dictionary<string, object?>());
+        t.Snapshot(() => { built = true; return "late"; }, 0);
+
+        Assert.False(built);
+        Assert.Equal(0, consulted);
+    }
+
     /// <summary>A devlog server on a free loopback port that records every request and answers
     /// with a configurable status per endpoint.</summary>
     private sealed class FakeDevlog : IDisposable
@@ -206,11 +529,13 @@ public sealed class DevTelemetryTests
         private readonly HttpListener listener = new();
         private readonly ConcurrentQueue<Post> posts = new();
         private readonly ConcurrentDictionary<string, int> received = new();
+        private readonly CancellationTokenSource stopping = new();
         private readonly Task serving;
 
         public volatile int LogStatus = 204;
         public volatile int RecordsStatus = 204;
         public volatile int LogDelayMs;
+        public volatile int RecordsDelayMs;
 
         public string LogUrl { get; }
 
@@ -258,12 +583,22 @@ public sealed class DevTelemetryTests
                     return;
                 }
 
+                // Each request on its own task, so a delayed or aborted post never holds up the next.
+                _ = Task.Run(() => Handle(ctx));
+            }
+        }
+
+        private async Task Handle(HttpListenerContext ctx)
+        {
+            try
+            {
                 var req = ctx.Request;
                 var path = req.Url!.AbsolutePath;
                 received.AddOrUpdate(path, 1, (_, n) => n + 1);
                 using var body = new MemoryStream();
                 await req.InputStream.CopyToAsync(body);
-                if (path == "/log" && LogDelayMs > 0) await Task.Delay(LogDelayMs);
+                int delay = path == "/records" ? RecordsDelayMs : LogDelayMs;
+                if (delay > 0) await Task.Delay(delay, stopping.Token);
 
                 int status = path == "/records" ? RecordsStatus : LogStatus;
                 posts.Enqueue(new Post(path, req.Url.Query, req.Headers["X-Devlog-Session"], req.Headers["X-Devlog-Offset"],
@@ -271,10 +606,15 @@ public sealed class DevTelemetryTests
                 ctx.Response.StatusCode = status;
                 ctx.Response.Close();
             }
+            catch (Exception e) when (e is OperationCanceledException or HttpListenerException or ObjectDisposedException or InvalidOperationException)
+            {
+                // The client gave up or the listener stopped mid-request.
+            }
         }
 
         public void Dispose()
         {
+            stopping.Cancel();
             listener.Stop();
             listener.Close();
             serving.Wait(TimeSpan.FromSeconds(5));
