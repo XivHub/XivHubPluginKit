@@ -19,6 +19,8 @@ Endpoints:
   POST /file     one whole artefact -> DUMPDIR
   GET  /log, /   tail of LOGFILE (?n=, default 500, 0 = all)
   GET  /records  tail of RECORDSFILE (?n=, default 500, 0 = all)
+  GET  /setup/<name>  SETUPDIR/<name>.json as is (default ~/.cache/zhyra-devlog/setup/), 404 if
+                 absent: a capture setup a plugin loads instead of the owner configuring it by hand
   GET  /health
 
 /log and /records split a body on "\n" only, dedupe retried batches by X-Devlog-Session and
@@ -44,6 +46,8 @@ LOGFILE.parent.mkdir(parents=True, exist_ok=True)
 MAX_BYTES = int(os.environ.get("MAX_BYTES", str(25 * 1024 * 1024)))
 # Structured records (JSON lines), kept apart from live.log so jq can read the file whole.
 RECORDSFILE = pathlib.Path(os.environ.get("RECORDSFILE", LOGFILE.parent / "records.jsonl"))
+SETUPDIR = pathlib.Path(os.environ.get("SETUPDIR", LOGFILE.parent / "setup"))
+SETUP_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 # Whole artefacts (addon dumps, captures) land here as discrete files rather than as log lines, so
 # one dump stays one readable unit instead of interleaving with whatever else is logging.
 DUMPDIR = pathlib.Path(os.environ.get("DUMPDIR", LOGFILE.parent / "dumps"))
@@ -270,6 +274,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         if path.rstrip("/") == "/health":
             self._text(200, "zhyra-devlog ok\n")
+            return
+        if path.startswith("/setup/"):
+            # The name is matched whole, so it can't climb out of SETUPDIR.
+            name = path[len("/setup/"):].rstrip("/")
+            if not SETUP_NAME.match(name):
+                self._text(400, "setup name: letters, digits, - and _ only\n")
+                return
+            try:
+                body = (SETUPDIR / f"{name}.json").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._text(404, f"no setup {name}\n")
+                return
+            self._text(200, body)
             return
         records = path.rstrip("/") == "/records"
 
