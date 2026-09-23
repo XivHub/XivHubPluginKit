@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Flags the theme mistakes the kit helpers exist to prevent: coloured text that never wraps
-# (UI/HubText.cs), a table with a pixel column width or built without UI/HubTable.cs, a tab bar
+# (UI/HubText.cs), a table or column built without UI/HubTable.cs (whose Fit columns refit to
+# their contents every frame, where a raw fixed column keeps its first width), a tab bar
 # that can truncate instead of scroll (UI/HubTabs.cs), a raw style push outside the theme itself,
 # and the ellipsis glyph the game font draws as three centred dots (UI/THEME.md, "Text"). Run
 # before every commit that touches UI code.
@@ -24,7 +25,7 @@ done < <(find "$dir" \( -path '*/bin/*' -o -path '*/obj/*' \) -prune -o -type f 
 
 hits=0
 text_colored=0
-table_width=0
+table_column=0
 begin_table=0
 begin_tabbar=0
 push_style_color=0
@@ -32,29 +33,33 @@ ellipsis=0
 minus=0
 
 for f in "${files[@]}"; do
-  while IFS= read -r line; do
-    echo "$f:$line: ImGui.TextColored(HubStyle. doesn't wrap; use HubText"
-    text_colored=$((text_colored + 1)); hits=$((hits + 1))
-  done < <(grep -n 'ImGui\.TextColored(HubStyle\.' "$f" | cut -d: -f1)
+  rel="${f#"$dir"/}"
+  in_ui=0
+  [[ "$rel" == UI/* || "$rel" == */UI/* ]] && in_ui=1
+
+  if [[ "$in_ui" -eq 0 ]]; then
+    while IFS= read -r line; do
+      echo "$f:$line: ImGui.TextColored( doesn't wrap; use HubText (HubText.Inline for a SameLine fragment)"
+      text_colored=$((text_colored + 1)); hits=$((hits + 1))
+    done < <(grep -n 'ImGui\.TextColored(' "$f" | cut -d: -f1)
+
+    while IFS= read -r line; do
+      echo "$f:$line: ImGui.TableSetupColumn(; use HubTable.Stretch/Fit/Icon"
+      table_column=$((table_column + 1)); hits=$((hits + 1))
+    done < <(grep -n 'ImGui\.TableSetupColumn(' "$f" | cut -d: -f1)
+  fi
 
   while IFS= read -r line; do
-    echo "$f:$line: TableSetupColumn( with a pixel width; use HubTable.Fit/Stretch"
-    table_width=$((table_width + 1)); hits=$((hits + 1))
-  done < <(grep -noE 'TableSetupColumn\([^)]*WidthFixed[^)]*,\s*[0-9]+(\.[0-9]+)?\s*\)' "$f" \
-             | cut -d: -f1)
-
-  while IFS= read -r line; do
-    echo "$f:$line: ImGui.BeginTable(; use HubTable.Begin"
+    echo "$f:$line: ImGui.BeginTable( or ImRaii.Table(; use HubTable.Begin"
     begin_table=$((begin_table + 1)); hits=$((hits + 1))
-  done < <(grep -n 'ImGui\.BeginTable(' "$f" | cut -d: -f1)
+  done < <(grep -nE 'ImGui\.BeginTable\(|ImRaii\.Table\(' "$f" | cut -d: -f1)
 
   while IFS= read -r line; do
     echo "$f:$line: ImGui.BeginTabBar( without FittingPolicyScroll; use HubTabs.Begin"
     begin_tabbar=$((begin_tabbar + 1)); hits=$((hits + 1))
   done < <(grep -n 'ImGui\.BeginTabBar(' "$f" | grep -v 'FittingPolicyScroll' | cut -d: -f1)
 
-  rel="${f#"$dir"/}"
-  if [[ "$rel" != UI/* && "$rel" != */UI/* ]]; then
+  if [[ "$in_ui" -eq 0 ]]; then
     while IFS= read -r line; do
       echo "$f:$line: ImGui.PushStyleColor( outside UI/; use a HubStyle role"
       push_style_color=$((push_style_color + 1)); hits=$((hits + 1))
@@ -81,9 +86,9 @@ for f in "${files[@]}"; do
 done
 
 echo "---"
-echo "ImGui.TextColored(HubStyle.: $text_colored"
-echo "TableSetupColumn( pixel width: $table_width"
-echo "ImGui.BeginTable(: $begin_table"
+echo "ImGui.TextColored( outside UI/: $text_colored"
+echo "ImGui.TableSetupColumn( outside UI/: $table_column"
+echo "ImGui.BeginTable( or ImRaii.Table(: $begin_table"
 echo "ImGui.BeginTabBar( without FittingPolicyScroll: $begin_tabbar"
 echo "ImGui.PushStyleColor( outside UI/: $push_style_color"
 echo "U+2026 in a string literal: $ellipsis"
