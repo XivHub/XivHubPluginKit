@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <Compile Include="..\DevTelemetry.cs" Link="DevTelemetry.cs" />
+    <Compile Include="..\Board\BoardModels.cs" Link="Board\BoardModels.cs" />
+    <Compile Include="..\Board\ListingsGate.cs" Link="Board\ListingsGate.cs" />
   </ItemGroup>
 
 </Project>
