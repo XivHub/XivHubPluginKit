@@ -292,3 +292,65 @@ Rules the buyer encodes, each from a failure seen in game:
 // Plugin ctor, after ECommonsMain.Init:
 KitServices.Init(DataManager, Log, ChatGui, "[MyPlugin]");
 ```
+
+## Board: market-board search and reads
+
+Searches the market board for one item and reads what its windows show. Moved from Furnisher,
+whose board search and guarded buying run on it; the callbacks come from UiCapture recordings
+(`~/dev/ffxiv-knowledge/market-board.md` "Search and buy flow"). Needs ECommons initialised before a
+`BoardSearch` is constructed (its ECommons task manager subscribes to the framework in its own
+constructor), and `KitServices.Init(...)` before the first `BoardReader` call: `BoardSearch` queues its
+steps on that task manager, `BoardReader` logs through `KitServices.Log`, and `HeldForBuy` reads the bags through
+`MainBags` and `InventoryScan`.
+
+| File | What it does |
+| --- | --- |
+| `Board/BoardModels.cs` | `BoardListing`, `BoardSnapshot` (one read of the listings and the result item) and `SearchPage` (the search page's result ids). BCL only. |
+| `Board/ListingsGate.cs` | `ListingsGate.Observe(read, nowMs)` says when a result's listings answer this request and have stopped changing, or that the item has none. BCL only, tested in `ListingsGateTests`. |
+| `Board/BoardReader.cs` | Static reads of `AgentItemSearch`, `InfoProxyItemSearch` and the board's addons: `SearchOpen`, `ResultsOpen`, `BlockingWindow`, `ReadyAddon`, `WindowVisible`, `Read`, `ReadSearchPage`, and the purchase-side `SelectedIndex`, `LastPurchasedListingId`, `YesnoText` and `HeldForBuy`. Fires nothing. |
+| `Board/BoardSearch.cs` | `Start(itemId)` types the item's name into the search, opens its result by item id and waits for its listings; `Busy`, `Outcome` (`Opened`, `NoListings`, `Failed` with a reason), `Stop(reason)` (recorded as the
+failure; defaults to "stopped by you") and `Guard()` (why a search can't start: board closed, or its filter, history or confirm window open). |
+
+The only callbacks `BoardSearch` fires are `ItemSearch [7, -1, 0]` (clear the page), `ItemSearch
+[9, …]` (type the name), `ItemSearch [5, i]` (open result i) and `ItemSearchResult [-1]` (close a
+results window). It never fires `ItemSearchResult [2, i]` (pick a listing) or anything on
+`SelectYesno`, so a search cannot start a purchase. Whether another automation of the plugin is
+running is the caller's check, next to `Guard()`.
+
+Framework thread only: call `Start`, `Stop` and every `BoardReader` method from a window draw or a
+framework update. `BoardSearch` subscribes its watchdog to the `IFramework` it is given once, in
+the constructor, and releases it in `Dispose`, which also stops a running search and disposes its
+task manager; a finished, stopped or failed search leaves the subscription in place and idle.
+Dispose it with the plugin's other services. Each plugin compiles its own copy, so the statics
+(`BoardReader`'s log-once flag, the `KitBoardSearch` throttle in that plugin's ECommons) are per
+plugin. The board itself is not: two plugins searching at once drive the same `ItemSearch`
+window.
+
+```xml
+<Compile Include="..\..\XivHubPluginKit\KitServices.cs" Link="Kit\KitServices.cs" />
+<Compile Include="..\..\XivHubPluginKit\DevTelemetry.cs" Link="Kit\DevTelemetry.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\ItemSheet.cs" Link="Kit\Inventory\ItemSheet.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\SlotView.cs" Link="Kit\Inventory\SlotView.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\InventoryScan.cs" Link="Kit\Inventory\InventoryScan.cs" />
+<Compile Include="..\..\XivHubPluginKit\Inventory\MainBags.cs" Link="Kit\Inventory\MainBags.cs" />
+<Compile Include="..\..\XivHubPluginKit\Board\BoardModels.cs" Link="Kit\Board\BoardModels.cs" />
+<Compile Include="..\..\XivHubPluginKit\Board\ListingsGate.cs" Link="Kit\Board\ListingsGate.cs" />
+<Compile Include="..\..\XivHubPluginKit\Board\BoardReader.cs" Link="Kit\Board\BoardReader.cs" />
+<Compile Include="..\..\XivHubPluginKit\Board\BoardSearch.cs" Link="Kit\Board\BoardSearch.cs" />
+```
+
+```csharp
+// Plugin ctor, after ECommonsMain.Init and KitServices.Init:
+BoardSearch = new BoardSearch(
+    Framework,                  // the plugin's own IFramework
+    Log,
+    () => C.UiStepDelayMs,      // minimum gap between clicks, read on every click
+    GameData.Name,              // item id -> plain name (Name.ExtractText()), "" when unknown;
+                                // not ItemSheet.Name, whose ToString() keeps payload markup
+    () => Telemetry);           // DevTelemetry?, for the boardsearch devlog record
+// Dispose():
+BoardSearch.Dispose();
+```
+
+Furnisher's `BoardBuyer`, `BuyGuard`, `PurchaseText` and `ListingSlot` (guarded board buying on
+top of this search) are the next to move here.
