@@ -63,9 +63,25 @@ public static class ArtisanBridge
     /// <summary>True when Artisan's list IPC also provides <c>Artisan.ImportList</c>.</summary>
     public static bool SupportsImport => ApiVersion() >= ImportApiVersion;
 
+    private const long VersionCacheMs = 2000;
+    private static long versionReadAt = long.MinValue;
+    private static int? cachedVersion;
+
     /// <summary>The provider's list IPC version, or null when it is unavailable or older than
-    /// <see cref="MinApiVersion"/>.</summary>
+    /// <see cref="MinApiVersion"/>. Cached for <see cref="VersionCacheMs"/>, as
+    /// <see cref="PluginPresence"/> is: the <c>Supports*</c> gates run every frame from a UI, and an
+    /// uncached read is an IPC round trip, or a thrown <c>IpcNotReadyError</c> under upstream
+    /// Artisan, per frame.</summary>
     private static int? ApiVersion()
+    {
+        var now = Environment.TickCount64;
+        if (now - versionReadAt < VersionCacheMs) return cachedVersion;
+        cachedVersion = ReadApiVersion();
+        versionReadAt = now;
+        return cachedVersion;
+    }
+
+    private static int? ReadApiVersion()
     {
         if (!PluginPresence.IsInstalled(InternalName))
         {

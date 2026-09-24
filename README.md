@@ -213,8 +213,9 @@ Needs ECommons initialised in the consuming plugin. `FlightHelper` also needs
 ## Crafting/ArtisanBridge — Artisan list IPC
 
 Creates and imports Artisan crafting lists through the XivHub Artisan fork's IPC (`Artisan/IPC/IPC.cs`
-in that repo). Needs ECommons initialised in the consuming plugin (`Svc.PluginInterface`); no
-`KitServices.Init(...)` dependency.
+in that repo). Needs ECommons initialised in the consuming plugin (`Svc.PluginInterface`) and
+`KitServices.Init(...)` called, since every failure is logged through `KitServices.Log`; without it
+the logging inside the catch blocks throws.
 
 `Artisan.ApiVersion` gates what the provider speaks:
 
@@ -231,9 +232,11 @@ Artisan, or a build without the list IPC), a version older than the call needs, 
 threw (`IpcNotReadyError`, `IpcError`, or any other exception). Each failure kind is logged once
 per process, not once per call, so a caller in a per-frame path does not flood the log. `Available`,
 `SupportsSubcrafts` and `SupportsImport` gate a UI on the provider's version without making the
-call. Framework thread only.
+call; the version they read is cached for 2 s, so they cost nothing per frame. Framework thread
+only.
 
 ```xml
+<Compile Include="..\..\XivHubPluginKit\KitServices.cs" Link="Kit\KitServices.cs" />
 <Compile Include="..\..\XivHubPluginKit\PluginPresence.cs" Link="Kit\PluginPresence.cs" />
 <Compile Include="..\..\XivHubPluginKit\Crafting\ArtisanBridge.cs" Link="Kit\Crafting\ArtisanBridge.cs" />
 ```
