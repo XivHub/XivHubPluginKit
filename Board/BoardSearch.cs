@@ -9,8 +9,12 @@ namespace XivHubPluginKit.Board;
 
 public enum BoardSearchResult { Opened, NoListings, Failed }
 
-/// <summary>How a search ended; <see cref="Reason"/> is set for <see cref="BoardSearchResult.Failed"/>.</summary>
-public sealed record BoardSearchOutcome(uint ItemId, BoardSearchResult Result, string? Reason);
+/// <summary>How a search ended; <see cref="Reason"/> is set for <see cref="BoardSearchResult.Failed"/>.
+/// <see cref="ItemProblem"/> marks a failure of this item alone (no name to type, not in the
+/// search results) while the board kept answering, so a caller searching many items can move on
+/// rather than read it as the board failing.</summary>
+public sealed record BoardSearchOutcome(uint ItemId, BoardSearchResult Result, string? Reason,
+                                        bool ItemProblem = false);
 
 /// <summary>
 /// Opens one item's listings on the market board by typing its exact name into the board's
@@ -60,6 +64,7 @@ public sealed unsafe class BoardSearch : IDisposable
 
     private string name = string.Empty;
     private string? failure;
+    private bool failureIsItemProblem;
     private long deadlineMs;
     private bool closeFired;
     private long searchFiredMs;
@@ -119,6 +124,7 @@ public sealed unsafe class BoardSearch : IDisposable
         ItemId = itemId;
         name = nameOf(itemId);
         failure = null;
+        failureIsItemProblem = false;
         closeFired = false;
         searchFiredMs = 0;
         searchStarted = false;
@@ -205,7 +211,7 @@ public sealed unsafe class BoardSearch : IDisposable
         // Checked before the clear, so a search that can't run leaves the player's page alone.
         if (name.Length == 0)
         {
-            Fail($"Item {ItemId} has no name to search for.");
+            Fail($"Item {ItemId} has no name to search for.", itemProblem: true);
             return true;
         }
         if (BoardReader.Read() is null)
@@ -283,7 +289,7 @@ public sealed unsafe class BoardSearch : IDisposable
         if (searchStarted && page.Loaded && !page.Searching)
         {
             index = IndexOf(page.ItemIds, ItemId);
-            if (index < 0) Fail($"{name} isn't in the board's search results.");
+            if (index < 0) Fail($"{name} isn't in the board's search results.", itemProblem: true);
             return true;
         }
 
@@ -419,9 +425,10 @@ public sealed unsafe class BoardSearch : IDisposable
     /// </summary>
     private void Rethrottle() => EzThrottler.Throttle(ThrottleName, stepDelayMs(), true);
 
-    private void Fail(string reason)
+    private void Fail(string reason, bool itemProblem = false)
     {
         failure = reason;
+        failureIsItemProblem = itemProblem;
         telemetry()?.Log($"boardsearch: failed: {reason}");
     }
 
@@ -466,7 +473,8 @@ public sealed unsafe class BoardSearch : IDisposable
         if (abortQueue) tasks.Abort();
 
         if (failure != null)
-            Outcome = new BoardSearchOutcome(ItemId, BoardSearchResult.Failed, failure);
+            Outcome = new BoardSearchOutcome(ItemId, BoardSearchResult.Failed, failure,
+                                             failureIsItemProblem);
         else
             Outcome ??= new BoardSearchOutcome(ItemId, BoardSearchResult.Failed, "the search ended early");
 
