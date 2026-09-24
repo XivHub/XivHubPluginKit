@@ -210,6 +210,34 @@ Needs ECommons initialised in the consuming plugin. `FlightHelper` also needs
 <Compile Include="..\..\XivHubPluginKit\Game\LineOfSight.cs" Link="Kit\Game\LineOfSight.cs" />
 ```
 
+## Crafting/ArtisanBridge — Artisan list IPC
+
+Creates and imports Artisan crafting lists through the XivHub Artisan fork's IPC (`Artisan/IPC/IPC.cs`
+in that repo). Needs ECommons initialised in the consuming plugin (`Svc.PluginInterface`); no
+`KitServices.Init(...)` dependency.
+
+`Artisan.ApiVersion` gates what the provider speaks:
+
+| Version | Adds |
+| --- | --- |
+| 1 | `Artisan.CreateList(name, items)` — final items only, no per-row options |
+| 2 | `Artisan.CreateListWithSubcrafts(name, items)` — same signature, also adds every intermediate craft |
+| 3 | `Artisan.ImportList(json)` — imports a full Artisan export JSON, keeping its `SkipIfEnough`, `SkipLiteral` and each row's Quick Synthesis choice |
+
+`CreateList`/`CreateListWithSubcrafts` and `ImportList` each return the new list id, `-1` when
+Artisan refused the call (no item resolved to a recipe; blank json or a parse failure), or `null`
+when the IPC is unavailable — Artisan not installed, no `Artisan.ApiVersion` provider (upstream
+Artisan, or a build without the list IPC), a version older than the call needs, or the call itself
+threw (`IpcNotReadyError`, `IpcError`, or any other exception). Each failure kind is logged once
+per process, not once per call, so a caller in a per-frame path does not flood the log. `Available`,
+`SupportsSubcrafts` and `SupportsImport` gate a UI on the provider's version without making the
+call. Framework thread only.
+
+```xml
+<Compile Include="..\..\XivHubPluginKit\PluginPresence.cs" Link="Kit\PluginPresence.cs" />
+<Compile Include="..\..\XivHubPluginKit\Crafting\ArtisanBridge.cs" Link="Kit\Crafting\ArtisanBridge.cs" />
+```
+
 ## Shop/ — buying from an NPC gil shop
 
 Buys a list of items from the vendor the player is standing next to, then leaves the
