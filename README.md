@@ -308,7 +308,8 @@ steps on that task manager, `BoardReader` logs through `KitServices.Log`, and `H
 | `Board/BoardModels.cs` | `BoardListing`, `BoardSnapshot` (one read of the listings and the result item) and `SearchPage` (the search page's result ids). BCL only. |
 | `Board/ListingsGate.cs` | `ListingsGate.Observe(read, nowMs)` says when a result's listings answer this request and have stopped changing, or that the item has none. BCL only, tested in `ListingsGateTests`. |
 | `Board/BoardReader.cs` | Static reads of `AgentItemSearch`, `InfoProxyItemSearch` and the board's addons: `SearchOpen`, `ResultsOpen`, `BlockingWindow`, `ReadyAddon`, `WindowVisible`, `Read`, `ReadSearchPage`, and the purchase-side `SelectedIndex`, `LastPurchasedListingId`, `YesnoText` and `HeldForBuy`. Fires nothing. |
-| `Board/BoardSearch.cs` | `Start(itemId)` types the item's name into the search, opens its result by item id and waits for its listings; `Busy`, `Outcome` (`Opened`, `NoListings`, `Failed` with a reason), `Stop(reason)` (recorded as the
+| `Board/BoardSearch.cs` | `Start(itemId)` types the item's name into the search, opens its result by item id and waits for its listings; `Busy`, `Outcome` (`Opened`, `NoListings`, `Failed` with a reason, and
+`ItemProblem` marks a failure that belongs to the item, such as no name to search or not in the results, not the board), `Stop(reason)` (recorded as the
 failure; defaults to "stopped by you") and `Guard()` (why a search can't start: board closed, or its filter, history or confirm window open). |
 
 The only callbacks `BoardSearch` fires are `ItemSearch [7, -1, 0]` (clear the page), `ItemSearch
