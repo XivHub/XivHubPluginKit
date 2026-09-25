@@ -326,7 +326,7 @@ the price a live Compare Prices lookup decides.
 | File | Holds | Needs |
 | --- | --- | --- |
 | `PinchEngine.cs` | the engine: `RunOpenAsync` (the retainer whose sell list is open), `RunAllAsync` (every retainer from `RetainerList`), `RunForOpenRetainerAsync` (the retainer AutoRetainer's post-process window hands over), the row steps, the early-exit budget, `AllLive`, `LiveRowNeedsVisit`, and the `PlanFn` delegate | ECommons, `KitServices`, everything below |
-| `PinchModels.cs` | `PinchSettings`, `RetainerPlan`, `PinchRetainer`, `PinchEntry`, `PinchWrite`, `PriceDecision`, `DryRunVisit`, `PinchRetainerResult`, `PinchSessionResult` | nothing (BCL only) |
+| `PinchModels.cs` | `PinchSettings`, `RetainerPlan`, `PinchRetainer`, `PinchWrite`, `PriceDecision`, `DryRunVisit`, `PinchRetainerResult`, `PinchSessionResult` | nothing (BCL only) |
 | `PinchDecision.cs` | `PinchDecision.Decide`: the price to write from one board answer, the current price and the floor | `Board/BoardObservation` |
 | `PinchPlanning.cs` | `RowsToVisit` (which sell-list rows a plan claims) and `NeedsVisit` (whether a cached board answer still calls for a write) | `Board/BoardObservation` |
 
@@ -384,15 +384,17 @@ Rules:
   that changed nothing must not spend it, or a later row that needs a write is skipped: the sell
   list is drawn in the game's category order, not ours.
 - `RunForOpenRetainerAsync` must not suppress AutoRetainer: suppressing mid-cycle switches multi mode
-  off under the rotation. The caller owns the busy check and any per-retainer interval.
+  off under the rotation. The caller owns any per-retainer interval.
+- Every entry point holds one run flag from start to finish, and `IsBusy` reads it. A second run
+  while one is going returns null; the task queue alone goes idle between batches, and a run started
+  in that gap would cancel the first and release AutoRetainer's suppression under it.
 - One board lookup at a time per plugin: the engine's probe shares the plugin's
   `MarketBoardListener`, which awaits one request at a time.
 - Every UI step runs on the framework thread through the engine's `TaskManager`; the entry points
   read addon memory only through `Svc.Framework.RunOnFrameworkThread`. `CanPinchNow` is framework
   thread only.
-- Plugin wording goes in through the plan: `OpeningLogTemplate` replaces the default
-  `Pinch: {Visit} of {Rows} row(s) need opening`. A dry run opens nothing and returns
-  `PinchRetainerResult.DryRun`; the caller prints its own dry-run lines from it.
+- A dry run opens nothing and returns `PinchRetainerResult.DryRun`; the caller prints its own
+  dry-run lines from it.
 
 ## UI
 
@@ -420,7 +422,7 @@ sizing or tab overflow wrong; `HubWindow.FitHeight` caps a window at its content
 ## Tests
 
 ```bash
-dotnet test XivHubPluginKit.Tests/XivHubPluginKit.Tests.csproj   # DevTelemetry, ListingsGate (.NET 10 SDK)
+dotnet test XivHubPluginKit.Tests/XivHubPluginKit.Tests.csproj   # DevTelemetry, ListingsGate, PinchDecision, PinchPlanning (.NET 10 SDK)
 python3 test_devlog_server.py                                     # retry dedupe on /log
 python3 test_devlog_records.py                                    # /records
 ```

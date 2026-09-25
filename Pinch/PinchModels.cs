@@ -16,15 +16,12 @@ public readonly record struct PriceDecision(uint? Write, string Why, bool Announ
 /// <summary>One price actually written, for a caller's summary and events.</summary>
 public readonly record struct PinchWrite(uint ItemId, bool Hq, uint OldPrice, uint NewPrice);
 
-/// <summary>Which entry point started a retainer's run.</summary>
-public enum PinchEntry { Open, Cycle, Session }
-
-/// <summary>One retainer queued for a run, and which entry point queued it.</summary>
-public readonly record struct PinchRetainer(ulong Cid, string Name, PinchEntry Entry);
+/// <summary>One retainer queued for a run.</summary>
+public readonly record struct PinchRetainer(ulong Cid, string Name);
 
 /// <summary>
 /// What a plan delegate decided for one retainer's sell list: which rows get a
-/// live board lookup, and the text a caller wants surfaced through the run.
+/// live board lookup.
 /// </summary>
 public sealed class RetainerPlan
 {
@@ -36,12 +33,6 @@ public sealed class RetainerPlan
 
     public int Skipped { get; set; }
     public int NoData { get; set; }
-
-    /// <summary>Live lookups allowed this session; 0 is uncapped.</summary>
-    public int LiveCap { get; set; }
-
-    /// <summary>Serilog template with <c>{Visit}</c> and <c>{Rows}</c> holes for the opening-count log line.</summary>
-    public string? OpeningLogTemplate { get; set; }
 }
 
 /// <summary>Row counts for a dry run that never opened a window.</summary>

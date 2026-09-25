@@ -73,10 +73,9 @@ public sealed class PinchEngine : IDisposable
     /// <summary>The item the open window is selling; the floor is per item.</summary>
     private uint _liveItemId;
 
-    // Prices the board-compare path actually wrote on the current retainer. A
-    // fixed-target row is known before the queue runs and is counted up front;
-    // a board-priced one is only decided once its window is open, so it is
-    // recorded here as it happens and folded in after the queue drains.
+    // Prices written on the current retainer. Each is decided only once its
+    // row's window is open and the board has answered, so it is recorded here
+    // as it happens and folded into the result after the queue drains.
     private readonly List<PinchWrite> _liveWrites = new();
 
     // Written from the framework thread as each row is priced, read from the
@@ -121,8 +120,7 @@ public sealed class PinchEngine : IDisposable
     }
 
     // Early-exit: number of rows on the current retainer still expected to
-    // need a price change (fixed-target writes plus live rows that need a
-    // window). Set per-retainer in EnqueuePinchTasks, decremented on each real
+    // need a window opened for a board lookup. Set per-retainer in EnqueuePinchTasks, decremented on each real
     // write and on each row given up on. Once it hits 0, OpenItemContextMenu
     // short-circuits the remaining rows (no window open) instead of churning
     // through every already-at-target listing.
@@ -143,7 +141,22 @@ public sealed class PinchEngine : IDisposable
     private long _rowDeadlineMs;
     private const long RowOpenTimeoutMs = 10000;
 
-    public bool IsBusy => _tasks.IsBusy;
+    // Held for the whole of every entry point. The task queue alone is idle
+    // between batches, during framework-thread reads and while a plan is
+    // awaited, and a second run started in that gap would cancel this one's
+    // token and release AutoRetainer's suppression underneath it.
+    private int _running;
+
+    public bool IsBusy => Volatile.Read(ref _running) != 0 || _tasks.IsBusy;
+
+    private bool TryEnterRun()
+    {
+        if (Interlocked.CompareExchange(ref _running, 1, 0) == 0) return true;
+        _log.Warning("Pinch skipped: a run is already in progress");
+        return false;
+    }
+
+    private void ExitRun() => Volatile.Write(ref _running, 0);
 
     // AR-mirror throttle (mirrors AutoRetainer's Utils.GenericThrottle /
     // Utils.RethrottleGeneric). Every UI helper checks `GenericThrottle`
@@ -208,6 +221,13 @@ public sealed class PinchEngine : IDisposable
     /// </summary>
     public async Task<PinchRetainerResult?> RunOpenAsync(PlanFn? plan, bool dryRun, CancellationToken ct)
     {
+        if (!TryEnterRun()) return null;
+        try { return await RunOpenCoreAsync(plan, dryRun, ct); }
+        finally { ExitRun(); }
+    }
+
+    private async Task<PinchRetainerResult?> RunOpenCoreAsync(PlanFn? plan, bool dryRun, CancellationToken ct)
+    {
         // Capture retainer identity on framework thread before any async work.
         (ulong retainerCid, string retainerName) = await Svc.Framework.RunOnFrameworkThread(RetainerWalk.ReadActiveRetainer);
 
@@ -238,7 +258,7 @@ public sealed class PinchEngine : IDisposable
             return null;
         }
 
-        var retainer = new PinchRetainer(retainerCid, retainerName, PinchEntry.Open);
+        var retainer = new PinchRetainer(retainerCid, retainerName);
         RetainerPlan? p = plan is null ? AllLive(rows) : await plan(retainer, rows, token);
         if (p is null)
             return Empty(retainer, rows.Count);
@@ -278,10 +298,17 @@ public sealed class PinchEngine : IDisposable
     /// mid-cycle would switch multi mode off underneath the rotation; the
     /// post-process lock is already the mutex.
     ///
-    /// Returns null when the sell list never opened or held nothing priced. The
-    /// caller owns the busy check and any per-retainer interval.
+    /// Returns null when a run is already in progress, or the sell list never
+    /// opened or held nothing priced. The caller owns any per-retainer interval.
     /// </summary>
     public async Task<PinchRetainerResult?> RunForOpenRetainerAsync(PlanFn? plan, CancellationToken ct)
+    {
+        if (!TryEnterRun()) return null;
+        try { return await RunForOpenRetainerCoreAsync(plan, ct); }
+        finally { ExitRun(); }
+    }
+
+    private async Task<PinchRetainerResult?> RunForOpenRetainerCoreAsync(PlanFn? plan, CancellationToken ct)
     {
         (ulong retainerCid, string retainerName) = await Svc.Framework.RunOnFrameworkThread(RetainerWalk.ReadActiveRetainer);
         if (retainerCid == 0 || string.IsNullOrEmpty(retainerName))
@@ -316,7 +343,7 @@ public sealed class PinchEngine : IDisposable
             return null;
         }
 
-        var retainer = new PinchRetainer(retainerCid, retainerName, PinchEntry.Cycle);
+        var retainer = new PinchRetainer(retainerCid, retainerName);
         RetainerPlan? p = plan is null ? AllLive(rows) : await plan(retainer, rows, token);
         if (p is null)
         {
@@ -340,12 +367,13 @@ public sealed class PinchEngine : IDisposable
     /// </summary>
     public async Task<PinchSessionResult?> RunAllAsync(PlanFn? plan, CancellationToken ct)
     {
-        if (_tasks.IsBusy)
-        {
-            _log.Warning("Pinch session skipped: already busy");
-            return null;
-        }
+        if (!TryEnterRun()) return null;
+        try { return await RunAllCoreAsync(plan, ct); }
+        finally { ExitRun(); }
+    }
 
+    private async Task<PinchSessionResult?> RunAllCoreAsync(PlanFn? plan, CancellationToken ct)
+    {
         if (!await Svc.Framework.RunOnFrameworkThread(RetainerWalk.IsRetainerListReady))
         {
             _log.Warning("Pinch session skipped: RetainerList not open");
@@ -419,7 +447,7 @@ public sealed class PinchEngine : IDisposable
                     continue;
                 }
 
-                var retainer = new PinchRetainer(cid, name, PinchEntry.Session);
+                var retainer = new PinchRetainer(cid, name);
                 RetainerPlan? p = plan is null ? AllLive(rows) : await plan(retainer, rows, token);
                 if (p is null)
                 {
@@ -537,7 +565,7 @@ public sealed class PinchEngine : IDisposable
     /// </summary>
     public RetainerPlan AllLive(IReadOnlyList<RetainerMarketRow> rows)
     {
-        var plan = new RetainerPlan { LiveCap = 0 };
+        var plan = new RetainerPlan();
         foreach (var row in rows)
         {
             // Resolve the name up front so every skip/keep log line identifies
@@ -556,8 +584,6 @@ public sealed class PinchEngine : IDisposable
         }
         return plan;
     }
-
-    private const string DefaultOpeningLogTemplate = "Pinch: {Visit} of {Rows} row(s) need opening";
 
     private void EnqueuePinchTasks(
         RetainerPlan plan,
@@ -601,7 +627,7 @@ public sealed class PinchEngine : IDisposable
             }
             var visit = PinchPlanning.RowsToVisit(visual, rows.Count, plan.Live);
             if (visual.Count > 0)
-                _log.Information(plan.OpeningLogTemplate ?? DefaultOpeningLogTemplate, visit.Count, visual.Count);
+                _log.Information("Pinch: {Visit} of {Rows} row(s) need opening", visit.Count, visual.Count);
 
             if (dryRun)
             {
@@ -809,7 +835,7 @@ public sealed class PinchEngine : IDisposable
             // row that does need a change is short-circuited before it is
             // reached: the sell list is in the game's category order, so there
             // is no saying which rows come first.
-            return LiveCompareStep(addon, name, hq, curPrice, liveItemId, plan.LiveCap);
+            return LiveCompareStep(addon, name, hq, curPrice, liveItemId);
         }
 
         // 2. Nothing to do: cancel out without touching the price.
@@ -825,10 +851,10 @@ public sealed class PinchEngine : IDisposable
     /// item left alone. Policy stays here: the probe only reports the board.
     /// </summary>
     private unsafe bool? LiveCompareStep(
-        AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint itemId, int cap)
+        AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint itemId)
     {
         _liveItemId = itemId;
-        if (!_probe.Step(&addon->AtkUnitBase, itemId, hq, name, cap,
+        if (!_probe.Step(&addon->AtkUnitBase, itemId, hq, name, maxPerSession: 0,
                          _settings().MarketBoardDelayMs, out var price))
             return false;
 
