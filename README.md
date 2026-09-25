@@ -46,7 +46,7 @@ from inside a `catch` block.
 | Crafting | creating and importing Artisan crafting lists over IPC | `Crafting/ArtisanBridge.cs` | ECommons, `KitServices`, `PluginPresence` |
 | Shop | buying from the NPC gil shop the player stands next to, then leaving the conversation | `Shop/*.cs` | ECommons, `KitServices`, `Inventory/` bag files |
 | Retainer | the summoning-bell UI walk, a live memory read of an open retainer's listings, and AutoRetainer suppression | `Retainer/*.cs` | ECommons; `AutoRetainerSuppress` also needs `KitServices` |
-| Board | searching the market board for one item and reading its listings | `Board/*.cs` | ECommons, `KitServices`, `DevTelemetry`, `Inventory/` bag files |
+| Board | searching the market board for one item and reading its listings; live Compare Prices lookups from a retainer's sell window | `Board/*.cs` | ECommons, `KitServices`, `DevTelemetry`, `Inventory/` bag files; `MarketBoardListener` needs `IMarketBoard` and `IGameInteropProvider` |
 | UI | the shared XIV Hub ImGui theme, its settings editor, and table, tab and text helpers | `UI/*.cs` | nothing; see `UI/THEME.md` |
 
 ## PluginPresence
@@ -277,6 +277,45 @@ BoardSearch.Dispose();
 every `BoardReader` method from the framework thread (a window draw or a framework update). Each
 plugin has its own `BoardSearch`, but the board window is shared, so two plugins searching at once
 fight over it.
+
+The live-price lookup reads the board from the packets the game receives rather than from its
+windows:
+
+| File | Holds | Needs |
+| --- | --- | --- |
+| `BoardObservation.cs` | `LivePrice` (one item's cheapest competitor, last sale, own cheapest, and whether the offerings side answered) and `BoardObservation`, the full ladder and history of one lookup | nothing (BCL only) |
+| `MarketBoardListener.cs` | subscribes to `IMarketBoard` offerings and history and hooks the request-start packet; `BeginRequest`, `TryGetCheapestCompetitor`, `TryGetHistory`, `RequestStatus`, `Observation`, `EndRequest` | `IMarketBoard` and `IGameInteropProvider` passed in |
+| `LivePriceProbe.cs` | drives Compare Prices on an open `RetainerSell` window, retries a silent board, and caches each `(item, hq)` answer for the session | ECommons, `MarketBoardListener`, `BoardObservation` |
+
+`MarketBoardListener` awaits one request at a time: a new `BeginRequest` replaces the last, so a
+plugin runs one lookup session at a time, and `EndRequest` ends only the request its caller began.
+The request-start packet is what tells an empty board (status 0, no listings) from a reply that
+never came; the detour records it and always calls the original handler, so two plugins hooking it
+at once both see every packet. Create one listener per plugin and dispose it on unload.
+
+Each `LivePriceProbe` takes an EzThrottler name and a log tag from its caller; give each caller its
+own throttle name, since ECommons throttle names are global inside a plugin. `onResolved(itemId,
+hq)` fires once per finished lookup, before the answer is cached, including a lookup the
+per-session cap skipped; call `listener.Observation(itemId, hq)` there to get the ladder, which is
+null when the listener holds nothing for that item.
+
+```xml
+<Compile Include="..\..\XivHubPluginKit\Board\BoardObservation.cs" Link="Kit\Board\BoardObservation.cs" />
+<Compile Include="..\..\XivHubPluginKit\Board\MarketBoardListener.cs" Link="Kit\Board\MarketBoardListener.cs" />
+<Compile Include="..\..\XivHubPluginKit\Board\LivePriceProbe.cs" Link="Kit\Board\LivePriceProbe.cs" />
+```
+
+```csharp
+Listener = new MarketBoardListener(MarketBoard, GameInterop, log);   // IMarketBoard, IGameInteropProvider
+var probe = new LivePriceProbe(Listener, () => ownRetainerCids, log,
+    "MyPluginMBThrottle", "MyPlugin", onResolved: null);
+
+// every framework tick while a RetainerSell window is open:
+if (probe.Step(sell, itemId, hq, name, maxPerSession: 0, delayMs: C.MarketBoardDelayMs, out LivePrice price)) { ... }
+
+// Dispose():
+Listener.Dispose();
+```
 
 ## UI
 
