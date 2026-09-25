@@ -19,10 +19,10 @@ public static unsafe class InventoryScan
 {
     /// <summary>
     /// Free slots in the main inventory. Uses <see cref="InventoryManager.GetEmptySlotsInBag"/>.
-    /// NOTE (needs in-game verification, per PLAN.md): <c>GetEmptySlotsInBag</c> may over-count by
-    /// including non-bag containers (saddlebag / retainer bags). This is now consumed by two plugins,
-    /// including RetainerReach's retrieve-enable gating, so confirm the count is main-bag-only before
-    /// relying on it; fall back to iterating <c>Inventory1..4</c> if it over-counts.
+    /// Unverified: whether <c>GetEmptySlotsInBag</c> counts only <c>Inventory1..4</c> or also other
+    /// containers (saddlebag, retainer bags). An in-game comparison against
+    /// <c>MainBags.ReadFreeSlots</c>, which counts those four containers directly, settles it;
+    /// use that one where a wrong count matters.
     /// </summary>
     public static int FreeSlotsInBag()
     {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mini live-log server for Zhyra Dalamud plugins (local dev only).
 
-Plugins POST newline-delimited log lines (via ZhyraPluginKit.DevTelemetry); this appends them to a
+Plugins POST newline-delimited log lines (via XivHubPluginKit.DevTelemetry); this appends them to a
 file and echoes them to stdout so you (or an AI assistant on this box) can read plugin behaviour in
 real time. Binds the LAN so the game client on another machine can reach it.
 
