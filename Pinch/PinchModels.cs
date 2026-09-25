@@ -24,19 +24,12 @@ public readonly record struct PinchRetainer(ulong Cid, string Name, PinchEntry E
 
 /// <summary>
 /// What a plan delegate decided for one retainer's sell list: which rows get a
-/// fixed target price, which get a live board lookup, and the text a caller
-/// wants surfaced through the run.
+/// live board lookup, and the text a caller wants surfaced through the run.
 /// </summary>
 public sealed class RetainerPlan
 {
-    /// <summary>Fixed target price, keyed by the sell-list row's name and quality.</summary>
-    public Dictionary<(string Name, bool Hq), uint> Targets { get; set; } = new();
-
     /// <summary>Item id routed to a live board lookup, keyed by the row's name and quality.</summary>
     public Dictionary<(string Name, bool Hq), uint> Live { get; set; } = new();
-
-    /// <summary>Writes already decided before any row is opened.</summary>
-    public List<PinchWrite> Intended { get; set; } = new();
 
     /// <summary>Live-lookup rows counted toward the early-exit budget.</summary>
     public int LiveRows { get; set; }
@@ -46,9 +39,6 @@ public sealed class RetainerPlan
 
     /// <summary>Live lookups allowed this session; 0 is uncapped.</summary>
     public int LiveCap { get; set; }
-
-    /// <summary>Announce "why" for a fixed-target write; null leaves the write unannounced.</summary>
-    public string? TargetReason { get; set; }
 
     /// <summary>Serilog template with <c>{Visit}</c> and <c>{Rows}</c> holes for the opening-count log line.</summary>
     public string? OpeningLogTemplate { get; set; }

@@ -9,16 +9,15 @@ public static class PinchPlanning
     /// Which sell-list row indices still need a window opened.
     ///
     /// The sell list does not present rows in container-slot order, so there is
-    /// no reliable index-to-item mapping; a plan targets rows by name and
+    /// no reliable index-to-item mapping; a plan routes rows by name and
     /// quality instead, and this narrows the visual list down to the rows a
-    /// target or a live lookup actually claims. An unreadable list (empty
+    /// live lookup actually claims. An unreadable list (empty
     /// <paramref name="visual"/>) visits every row: slow is the acceptable
     /// failure here, skipping a row that needed a reprice is not.
     /// </summary>
     public static List<int> RowsToVisit(
         IReadOnlyList<(string Name, bool Hq)> visual,
         int rowCount,
-        IReadOnlyDictionary<(string, bool), uint> targets,
         IReadOnlyDictionary<(string, bool), uint> live)
     {
         var visit = new List<int>();
@@ -30,7 +29,7 @@ public static class PinchPlanning
 
         for (int i = 0; i < visual.Count; i++)
         {
-            if (targets.ContainsKey(visual[i]) || live.ContainsKey(visual[i]))
+            if (live.ContainsKey(visual[i]))
                 visit.Add(i);
         }
         return visit;

@@ -20,17 +20,17 @@ using XivHubPluginKit.Shop;
 namespace XivHubPluginKit.Pinch;
 
 /// <summary>
-/// Plans one retainer's sell list: which rows get a fixed target price and which
-/// a live board lookup. Returning null means the plan failed and the retainer is
-/// skipped. The token is the run's own, so cancelling the run cancels the plan.
+/// Plans one retainer's sell list: which rows get a live board lookup.
+/// Returning null means the plan failed and the retainer is skipped. The token
+/// is the run's own, so cancelling the run cancels the plan.
 /// </summary>
 public delegate Task<RetainerPlan?> PlanFn(PinchRetainer retainer, IReadOnlyList<RetainerMarketRow> rows, CancellationToken ct);
 
 /// <summary>
 /// Reprices retainer listings: walks the sell list, opens each row's Adjust
-/// Price window, and writes a fixed target or the price a live Compare Prices
-/// lookup decides. The consuming plugin supplies the policy: where targets come
-/// from (<see cref="PlanFn"/>), the profit floor, which retainers besides the
+/// Price window, and writes the price a live Compare Prices lookup decides.
+/// The consuming plugin supplies the policy: which rows get a live lookup
+/// (<see cref="PlanFn"/>), the profit floor, which retainers besides the
 /// session's own roster count as ours, and what happens with the result.
 ///
 /// Every UI step runs on the framework thread through an ECommons
@@ -468,11 +468,10 @@ public sealed class PinchEngine : IDisposable
     private static PinchRetainerResult Empty(PinchRetainer r, int rows)
         => new(r.Cid, r.Name, rows, 0, 0, 0, Array.Empty<PinchWrite>(), null);
 
-    // The plan's up-front writes plus whatever the board path wrote. Call once
-    // the queue has drained.
+    // Whatever the board path wrote. Call once the queue has drained.
     private PinchRetainerResult Result(PinchRetainer r, int rows, RetainerPlan plan, DryRunVisit? dry)
     {
-        var writes = new List<PinchWrite>(plan.Intended);
+        var writes = new List<PinchWrite>();
         TakeLiveWrites(writes);
         return new PinchRetainerResult(r.Cid, r.Name, rows, writes.Count, plan.Skipped, plan.NoData, writes, dry);
     }
@@ -571,19 +570,18 @@ public sealed class PinchEngine : IDisposable
         dry = null;
         lock (_liveWrites) _liveWrites.Clear();
 
-        // Early-exit budget: number of ROWS that still need a window opened:
-        // fixed-target writes (not Targets.Count, which collapses duplicate
-        // stacks) plus live-lookup rows. Once that many have been resolved (a
-        // real write, or a row given up on), the loop skips remaining rows
-        // without opening a window. A no-op same-value reprice doesn't count,
-        // so a duplicate stack already at target can't consume budget meant
-        // for another stack.
-        _rowsRemaining = plan.Intended.Count + plan.LiveRows;
+        // Early-exit budget: number of ROWS still expected to need a window
+        // opened (live-lookup rows). Once that many have been resolved (a real
+        // write, or a row given up on), the loop skips remaining rows without
+        // opening a window. A no-op same-value reprice doesn't count, so a
+        // duplicate stack already at its live-decided price can't consume
+        // budget meant for another stack.
+        _rowsRemaining = plan.LiveRows;
 
         // Visit every row the plan claims once; ApplyRepriceFromWindow reads the
-        // item the window actually opened and either applies its fixed target,
-        // runs a live market-board compare, or cancels.
-        if (plan.Targets.Count > 0 || plan.Live.Count > 0)
+        // item the window actually opened and runs a live market-board compare,
+        // or cancels.
+        if (plan.Live.Count > 0)
         {
             // The list names its own rows in AtkValues, so the rows that need
             // nothing can be left shut. Opening a row only to learn its item
@@ -601,7 +599,7 @@ public sealed class PinchEngine : IDisposable
                 // reprice is not.
                 _log.Warning("Pinch: could not read the sell list; visiting every row");
             }
-            var visit = PinchPlanning.RowsToVisit(visual, rows.Count, plan.Targets, plan.Live);
+            var visit = PinchPlanning.RowsToVisit(visual, rows.Count, plan.Live);
             if (visual.Count > 0)
                 _log.Information(plan.OpeningLogTemplate ?? DefaultOpeningLogTemplate, visit.Count, visual.Count);
 
@@ -779,9 +777,8 @@ public sealed class PinchEngine : IDisposable
     // its name+hq. We never trust the row index to tell us which item this is
     // (the list is category-sorted), so reading the window and matching by name
     // is what makes this misprice-proof. Resolution order:
-    //   1. fixed target present   -> set it
-    //   2. routed to a live lookup -> compare sub-machine
-    //   3. otherwise               -> cancel, leave unchanged
+    //   1. routed to a live lookup -> compare sub-machine
+    //   2. otherwise               -> cancel, leave unchanged
     private unsafe bool? ApplyRepriceFromWindow(RetainerPlan plan)
     {
         // The row had no "Adjust Price" (mannequin): no window will ever open.
@@ -802,29 +799,7 @@ public sealed class PinchEngine : IDisposable
         string name = NormalizeItemName(raw);
         var key = (name, hq);
 
-        // 1. The plan fixed a price.
-        if (name.Length != 0 && plan.Targets.TryGetValue(key, out uint newPrice))
-        {
-            if (!GenericThrottle) return false;
-            int old = addon->AskingPrice->Value;
-            // No-op when this stack is already at target (a duplicate stack of an
-            // item that needed repricing elsewhere): cancel without spending the
-            // early-exit budget, so the stack that does need it still gets visited.
-            if (old == (int)newPrice)
-            {
-                _log.Debug("Pinch: {Item} (hq={Hq}) — stack already at target {New}", name, hq, newPrice);
-                Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel
-                return true;
-            }
-            _log.Debug("Pinch: reprice {Item} (hq={Hq}) {Old} -> {New}", name, hq, old, newPrice);
-            if (plan.TargetReason is not null) Announce(name, hq, old, newPrice, plan.TargetReason);
-            addon->AskingPrice->SetValue((int)newPrice);
-            Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
-            if (_rowsRemaining != int.MaxValue) _rowsRemaining--;
-            return true;
-        }
-
-        // 2. Routed to a live market-board compare.
+        // 1. Routed to a live market-board compare.
         if (name.Length != 0 && plan.Live.TryGetValue(key, out uint liveItemId))
         {
             // This stack's own asking price, not a sibling stack's.
@@ -837,7 +812,7 @@ public sealed class PinchEngine : IDisposable
             return LiveCompareStep(addon, name, hq, curPrice, liveItemId, plan.LiveCap);
         }
 
-        // 3. Nothing to do: cancel out without touching the price.
+        // 2. Nothing to do: cancel out without touching the price.
         if (!GenericThrottle) return false;
         _log.Debug("Pinch: no target for window item '{Item}' (hq={Hq}); leaving unchanged", name, hq);
         Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel

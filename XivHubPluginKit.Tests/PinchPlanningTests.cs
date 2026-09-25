@@ -10,16 +10,15 @@ public class PinchPlanningTests
     public void AnUnreadableListVisitsEveryRow()
     {
         var visual = new List<(string, bool)>();
-        var targets = new Dictionary<(string, bool), uint>();
         var live = new Dictionary<(string, bool), uint>();
 
-        var visit = PinchPlanning.RowsToVisit(visual, rowCount: 3, targets, live);
+        var visit = PinchPlanning.RowsToVisit(visual, rowCount: 3, live);
 
         Assert.Equal(new List<int> { 0, 1, 2 }, visit);
     }
 
     [Fact]
-    public void OnlyRowsClaimedByATargetOrALiveLookupAreVisited()
+    public void OnlyRowsClaimedByALiveLookupAreVisited()
     {
         var visual = new List<(string, bool)>
         {
@@ -28,12 +27,11 @@ public class PinchPlanningTests
             ("", false),
             ("A", true),
         };
-        var targets = new Dictionary<(string, bool), uint> { [("A", false)] = 100 };
-        var live = new Dictionary<(string, bool), uint> { [("B", true)] = 42 };
+        var live = new Dictionary<(string, bool), uint> { [("B", true)] = 42, [("A", true)] = 99 };
 
-        var visit = PinchPlanning.RowsToVisit(visual, rowCount: visual.Count, targets, live);
+        var visit = PinchPlanning.RowsToVisit(visual, rowCount: visual.Count, live);
 
-        Assert.Equal(new List<int> { 0, 1 }, visit);
+        Assert.Equal(new List<int> { 1, 3 }, visit);
     }
 
     [Fact]

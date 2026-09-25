@@ -47,7 +47,7 @@ from inside a `catch` block.
 | Shop | buying from the NPC gil shop the player stands next to, then leaving the conversation | `Shop/*.cs` | ECommons, `KitServices`, `Inventory/` bag files |
 | Retainer | the summoning-bell UI walk, a live memory read of an open retainer's listings, and AutoRetainer suppression | `Retainer/*.cs` | ECommons; `AutoRetainerSuppress` also needs `KitServices` |
 | Board | searching the market board for one item and reading its listings; live Compare Prices lookups from a retainer's sell window | `Board/*.cs` | ECommons, `KitServices`, `DevTelemetry`, `Inventory/` bag files; `MarketBoardListener` needs `IMarketBoard` and `IGameInteropProvider` |
-| Pinch | repricing retainer listings from fixed targets or live Compare Prices lookups | `Pinch/*.cs` | ECommons, `KitServices`, `Inventory/ItemSheet`, `Inventory/VendorPrice`, `Shop/TalkSkipper`, `Retainer/`, `Board/` listener and probe; `PinchModels`, `PinchDecision`, `PinchPlanning` are BCL only |
+| Pinch | repricing retainer listings from live Compare Prices lookups | `Pinch/*.cs` | ECommons, `KitServices`, `Inventory/ItemSheet`, `Inventory/VendorPrice`, `Shop/TalkSkipper`, `Retainer/`, `Board/` listener and probe; `PinchModels`, `PinchDecision`, `PinchPlanning` are BCL only |
 | UI | the shared XIV Hub ImGui theme, its settings editor, and table, tab and text helpers | `UI/*.cs` | nothing; see `UI/THEME.md` |
 
 ## PluginPresence
@@ -321,7 +321,7 @@ Listener.Dispose();
 ## Pinch
 
 Repricing a retainer's listings: walk its sell list, open each row's Adjust Price window, and write
-either a fixed target price or the price a live Compare Prices lookup decides.
+the price a live Compare Prices lookup decides.
 
 | File | Holds | Needs |
 | --- | --- | --- |
@@ -377,13 +377,12 @@ Rules:
 - Pass the plugin's tee as the log. The engine and its probe log through the `IPluginLog` they are
   given, never `KitServices.Log`, so a plain log leaves every Pinch line out of the dev log.
 - No `PlanFn` means every row is a live lookup (`AllLive`, uncapped). A `PlanFn` fills
-  `RetainerPlan.Targets` for rows with a known price and `Live` for rows the board decides; it may
-  call `AllLive` and adjust the result.
+  `RetainerPlan.Live` for rows the board decides; it may call `AllLive` and adjust the result.
 - A null plan result skips the retainer: `RunOpenAsync` returns zero counts, `RunAllAsync` backs out
   to the retainer list and moves on uncounted, `RunForOpenRetainerAsync` closes the sell list.
-- `_rowsRemaining` counts writes still expected (`Intended.Count + LiveRows`), not rows visited. A
-  finished lookup that changed nothing must not spend it, or a later row that needs a write is
-  skipped: the sell list is drawn in the game's category order, not ours.
+- `_rowsRemaining` counts writes still expected (`LiveRows`), not rows visited. A finished lookup
+  that changed nothing must not spend it, or a later row that needs a write is skipped: the sell
+  list is drawn in the game's category order, not ours.
 - `RunForOpenRetainerAsync` must not suppress AutoRetainer: suppressing mid-cycle switches multi mode
   off under the rotation. The caller owns the busy check and any per-retainer interval.
 - One board lookup at a time per plugin: the engine's probe shares the plugin's
@@ -391,8 +390,7 @@ Rules:
 - Every UI step runs on the framework thread through the engine's `TaskManager`; the entry points
   read addon memory only through `Svc.Framework.RunOnFrameworkThread`. `CanPinchNow` is framework
   thread only.
-- Plugin wording goes in through the plan: `TargetReason` is the announce "why" for a fixed-target
-  write (null leaves it unannounced), and `OpeningLogTemplate` replaces the default
+- Plugin wording goes in through the plan: `OpeningLogTemplate` replaces the default
   `Pinch: {Visit} of {Rows} row(s) need opening`. A dry run opens nothing and returns
   `PinchRetainerResult.DryRun`; the caller prints its own dry-run lines from it.
 
