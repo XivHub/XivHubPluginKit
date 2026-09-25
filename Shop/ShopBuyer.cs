@@ -230,8 +230,7 @@ public sealed class ShopBuyer
 
     // --- opening the shop --------------------------------------------------
 
-    /// <summary>Null on success, otherwise the reason the shop could not be opened.</summary>
-    /// <summary>Talk to the vendor. Null once a shop or its menu is up.</summary>
+    /// <summary>Talk to the vendor. Null once a shop or its menu is up, otherwise the reason it could not be opened.</summary>
     private async Task<string?> InteractAsync(ShopVisit visit, ulong objectId, CancellationToken ct)
     {
         _lastInteractResult = 0;
@@ -310,21 +309,18 @@ public sealed class ShopBuyer
     }
 
     /// <summary>
-    /// Target the vendor and interact, retrying only a refused call.
+    /// Target the vendor and interact, retrying only while nothing opens.
     ///
-    /// Two ways to get this wrong, and the first fix walked into the second.
     /// Firing once and assuming it landed loses the whole budget when the game
-    /// drops the call — which it does while the character is still settling
-    /// after a walk. Firing repeatedly is worse: <c>InteractWithObject</c> is a
-    /// toggle, so the second call shuts the menu the first one opened, and the
-    /// step then times out with nothing on screen.
+    /// drops the call, which it does while the character is still settling
+    /// after a walk. Firing every frame is worse: <c>InteractWithObject</c> is
+    /// a toggle, so a second call shuts the menu the first one opened.
     ///
-    /// So: retry only while the call is actually being refused. It reports its
-    /// own outcome, and anything <c>&gt; 0</c> other than <c>7</c> took effect
-    /// (the rule Questionable's <c>GameFunctions.InteractWith</c> uses). After
-    /// that, waiting is the only correct move. Existence is checked rather than
-    /// readiness for the same reason: a window still animating open reads as
-    /// not-ready, and re-firing there would toggle it straight back shut.
+    /// So a shop or menu on screen, ready or still animating open, is the only
+    /// success test; the call's return value is not trusted, since it has read
+    /// as success with nothing opened. Until something appears, the call is
+    /// re-fired no faster than <c>InteractRetryMs</c>, long enough for a window
+    /// the last call opened to show up before the next could toggle it shut.
     /// </summary>
     private unsafe bool? InteractWithVendor(string npc, ulong objectId)
     {
