@@ -42,9 +42,17 @@ public static class HubTable
     /// and contents every frame. ImGui refits a fixed column every frame only when it can't be
     /// resized; a resizable one keeps the width measured in its first frames (imgui_tables.cpp
     /// <c>TableUpdateLayout</c>, "Latch initial size for fixed columns"), so a table first drawn
-    /// with short or no rows would stay too narrow once its real rows arrive.</summary>
+    /// with short or no rows would stay too narrow once its real rows arrive. A widget that fills
+    /// its column (<c>SetNextItemWidth(-1)</c>) has no width to fit to: use <see cref="Widget"/>.</summary>
     public static void Fit(string name, ImGuiTableColumnFlags extra = 0)
         => ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize | extra);
+
+    /// <summary>A fixed column <paramref name="width"/> pixels wide for input widgets (a combo,
+    /// an InputInt) that fill it with <c>SetNextItemWidth(-1)</c>. A <see cref="Fit"/> column
+    /// sizes to its contents, and a fill widget reports no width of its own, so it collapses
+    /// there; measure the widest thing the widget shows and pass that.</summary>
+    public static void Widget(string name, float width, ImGuiTableColumnFlags extra = 0)
+        => ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize | extra, width);
 
     /// <summary>A column exactly <paramref name="size"/> wide, scaled by
     /// <see cref="ImGuiHelpers.GlobalScale"/>, for the icon it holds rather than its text.</summary>
