@@ -64,7 +64,9 @@ public static class ArtisanBridge
     public static bool SupportsImport => ApiVersion() >= ImportApiVersion;
 
     private const long VersionCacheMs = 2000;
-    private static long versionReadAt = long.MinValue;
+    // Null until the first read. A long.MinValue sentinel would overflow `now - versionReadAt`
+    // to a negative number, so the cache would serve the initial null forever.
+    private static long? versionReadAt;
     private static int? cachedVersion;
 
     /// <summary>The provider's list IPC version, or null when it is unavailable or older than
@@ -75,7 +77,7 @@ public static class ArtisanBridge
     private static int? ApiVersion()
     {
         var now = Environment.TickCount64;
-        if (now - versionReadAt < VersionCacheMs) return cachedVersion;
+        if (versionReadAt is { } at && now - at < VersionCacheMs) return cachedVersion;
         cachedVersion = ReadApiVersion();
         versionReadAt = now;
         return cachedVersion;
