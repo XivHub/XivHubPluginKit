@@ -45,6 +45,7 @@ from inside a `catch` block.
 | Inventory | item sheet lookups, container scans, main-bag counts, NPC price floors, frame-spaced item moves | `Inventory/*.cs` | `KitServices`, except `SlotView` and `MoveOp` |
 | Crafting | creating and importing Artisan crafting lists over IPC | `Crafting/ArtisanBridge.cs` | ECommons, `KitServices`, `PluginPresence` |
 | Shop | buying from the NPC gil shop the player stands next to, then leaving the conversation | `Shop/*.cs` | ECommons, `KitServices`, `Inventory/` bag files |
+| Retainer | the summoning-bell UI walk, a live memory read of an open retainer's listings, and AutoRetainer suppression | `Retainer/*.cs` | ECommons; `AutoRetainerSuppress` also needs `KitServices` |
 | Board | searching the market board for one item and reading its listings | `Board/*.cs` | ECommons, `KitServices`, `DevTelemetry`, `Inventory/` bag files |
 | UI | the shared XIV Hub ImGui theme, its settings editor, and table, tab and text helpers | `UI/*.cs` | nothing; see `UI/THEME.md` |
 
@@ -96,6 +97,18 @@ does not already hold. Log lines and records travel on separate channels, so a f
 holds the other back. While the server is unreachable, records queue up to 16 MiB and the oldest are
 dropped first. `Dispose` spends at most 3 seconds delivering what is left, so a dead server delays
 plugin unload by no more than that.
+
+### TeeLog
+
+`TeeLog` wraps a plugin's `IPluginLog` and mirrors every line (and rendered Serilog template) to
+`DevTelemetry`, with no call-site changes. Hand a kit class that takes an `IPluginLog` this tee, not
+the plugin's own `IPluginLog`, if its log lines are meant to reach the dev-log server; kit code that
+logs through `KitServices.Log` instead of an injected `IPluginLog` bypasses the tee, because
+`KitServices.Init` is wired to the plain log.
+
+```csharp
+var devLog = new TeeLog(Log, Telemetry);
+```
 
 ### Running the server
 
@@ -210,6 +223,24 @@ The buyer follows these rules, each learned from a failure in game:
 
 Menus drawn as `SelectString` and `SelectIconString` are both handled. `ShopPurchase.Menu` must
 match the English entry label exactly, so shop buying works on an English client only.
+
+## Retainer
+
+| File | Holds |
+| --- | --- |
+| `RetainerWalk.cs` | the summoning-bell UI walk shared by every session that drives a retainer (`RetainerList` → row → "Sell Items" → `RetainerSellList`, and the teardown back out), the roster read, and the sell-list row names |
+| `RetainerMarket.cs` | `RetainerMarket.ReadLive`, a live memory read of the currently-open retainer's market listings |
+| `AutoRetainerSuppress.cs` | toggles AutoRetainer's suppression IPC around a session that drives a retainer by hand |
+
+Every `RetainerWalk` step and `RetainerMarket.ReadLive` must run on the framework thread. `RetainerWalk`
+and `AutoRetainerSuppress` need ECommons (`Svc`); `AutoRetainerSuppress` also needs `KitServices.Init`
+for `KitServices.Log`.
+
+```xml
+<Compile Include="..\..\XivHubPluginKit\Retainer\RetainerWalk.cs" Link="Kit\Retainer\RetainerWalk.cs" />
+<Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarket.cs" Link="Kit\Retainer\RetainerMarket.cs" />
+<Compile Include="..\..\XivHubPluginKit\Retainer\AutoRetainerSuppress.cs" Link="Kit\Retainer\AutoRetainerSuppress.cs" />
+```
 
 ## Board
 
