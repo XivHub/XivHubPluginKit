@@ -45,7 +45,7 @@ from inside a `catch` block.
 | Inventory | item sheet lookups, container scans, main-bag counts, NPC price floors, frame-spaced item moves | `Inventory/*.cs` | `KitServices`, except `SlotView` and `MoveOp` |
 | Crafting | creating and importing Artisan crafting lists over IPC | `Crafting/ArtisanBridge.cs` | ECommons, `KitServices`, `PluginPresence` |
 | Shop | buying from the NPC gil shop the player stands next to, then leaving the conversation | `Shop/*.cs` | ECommons, `KitServices`, `Inventory/` bag files |
-| Retainer | the summoning-bell UI walk, the native retrieve command that moves a stack out of a retainer's inventory, a live memory read of an open retainer's listings, and AutoRetainer suppression | `Retainer/*.cs` | ECommons; `AutoRetainerSuppress` and `RetainerRetrieve` also need `KitServices`, and `RetainerRetrieve` the `Inventory/` scan files |
+| Retainer | the summoning-bell UI walk, the native retrieve command that moves a stack out of a retainer's inventory, a live memory read of an open retainer's listings, and AutoRetainer suppression | `Retainer/*.cs` | ECommons; `AutoRetainerSuppress` and `RetainerRetrieve` also need `KitServices`, and `RetainerRetrieve` needs `Inventory/InventoryScan`, `Inventory/SlotView` and `Inventory/ItemSheet` |
 | Board | searching the market board for one item and reading its listings; live Compare Prices lookups from a retainer's sell window | `Board/*.cs` | ECommons, `KitServices`, `DevTelemetry`, `Inventory/` bag files; `MarketBoardListener` needs `IMarketBoard` and `IGameInteropProvider` |
 | Pinch | repricing retainer listings from live Compare Prices lookups | `Pinch/*.cs` | ECommons, `KitServices`, `Inventory/ItemSheet`, `Inventory/VendorPrice`, `Shop/TalkSkipper`, `Retainer/`, `Board/` listener and probe; `PinchModels`, `PinchDecision`, `PinchPlanning` are BCL only |
 | UI | the shared XIV Hub ImGui theme, its settings editor, and table, tab and text helpers | `UI/*.cs` | nothing; see `UI/THEME.md` |
@@ -229,16 +229,17 @@ match the English entry label exactly, so shop buying works on an English client
 
 | File | Holds |
 | --- | --- |
-| `RetainerWalk.cs` | the summoning-bell UI walk shared by every session that drives a retainer (`RetainerList` → row → "Sell Items" → `RetainerSellList`, or → "Entrust or withdraw items" → the retainer inventory, and the teardown back out, including the retainer inventory close), the roster read, and the sell-list row names |
-| `RetainerRetrieve.cs` | the native retainer item command: whole-stack retrieve from an open retainer inventory, the live page scan, the inventory-ready check |
+| `RetainerWalk.cs` | the summoning-bell UI walk shared by every session that drives a retainer (`RetainerList` → row → "Sell Items" → `RetainerSellList`, or → "Entrust or withdraw items" (`ClickEntrustOrWithdraw`, matched by Addon sheet row) → the retainer inventory, and the teardown back out, including `CloseRetainerInventory`, which leaves the inventory window for the retainer menu), `DescribeSelectString` for failure messages, the roster read, and the sell-list row names |
+| `RetainerRetrieve.cs` | the native retainer item command: whole-stack retrieve from an open retainer inventory, refused unless the slot still holds the item and quantity the caller scanned; the live page scan, the pages-loaded check, the inventory-ready check |
 | `RetainerMarket.cs` | `RetainerMarket.ReadLive`, a live memory read of the currently-open retainer's market listings |
 | `AutoRetainerSuppress.cs` | toggles AutoRetainer's suppression IPC around a session that drives a retainer by hand |
 
 Every `RetainerWalk` step, every `RetainerRetrieve` call and `RetainerMarket.ReadLive` must run on the
 framework thread. `RetainerWalk` and `AutoRetainerSuppress` need ECommons (`Svc`); `AutoRetainerSuppress`
 also needs `KitServices.Init` for `KitServices.Log`. `RetainerRetrieve` needs ECommons
-(`Svc.SigScanner`) and `KitServices.Init`, and scans pages through `Inventory/InventoryScan` and
-`Inventory/SlotView`, so link those too.
+(`Svc.SigScanner`, `Svc.Framework`) and `KitServices.Init`, and scans pages through
+`Inventory/InventoryScan`, which builds `Inventory/SlotView` rows named through `Inventory/ItemSheet`,
+so link all three too.
 
 ```xml
 <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerWalk.cs" Link="Kit\Retainer\RetainerWalk.cs" />

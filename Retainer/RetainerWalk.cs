@@ -10,6 +10,7 @@ using ECommons;
 using ECommons.DalamudServices;
 using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace XivHubPluginKit.Retainer;
@@ -17,7 +18,8 @@ namespace XivHubPluginKit.Retainer;
 /// <summary>
 /// The summoning-bell UI walk shared by every session that drives a retainer:
 /// <c>RetainerList</c> → retainer row → "Sell Items" → <c>RetainerSellList</c>,
-/// and the teardown back out of it.
+/// or → "Entrust or withdraw items" → the retainer inventory window, and the
+/// teardown back out of either.
 ///
 /// Each step takes the caller's throttle rather than owning one, so a session
 /// keeps its own pacing (Auto Pinch's is user-configurable, another session's is
@@ -169,32 +171,34 @@ public static class RetainerWalk
         return false;
     }
 
-    // Looser than CloseSelectStringBack's exact match: the sheet text and the
-    // drawn entry can differ by trailing punctuation, an auto-translate wrapper
-    // or stray whitespace, and an exact match would then silently find nothing.
+    // A prefix match, where CloseSelectStringBack matches Quit exactly: row
+    // 2378's text carries a macro after the words (the drawn entry adds the
+    // retainer's slot count), and GetText(true) stops at the first non-text
+    // payload, so the sheet text is a prefix of the drawn entry rather than the
+    // whole of it. AutoRetainer's SelectEntrustItems matches it the same way.
     private static bool MenuEntryMatches(string entryText, string target)
     {
-        entryText = entryText.Trim();
         target = target.Trim();
         if (target.Length == 0) return false;
-        return entryText.StartsWith(target, StringComparison.OrdinalIgnoreCase)
-               || entryText.Contains(target, StringComparison.OrdinalIgnoreCase);
+        return entryText.Trim().StartsWith(target, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The open <c>SelectString</c>'s entries, each quoted, for a failure
-    /// message: <c>SelectString entries=['a' | 'b']</c>, or
-    /// <c>SelectString=(not open)</c>. Framework thread.
+    /// The open <c>SelectString</c>'s entries, each quoted, and the text
+    /// <see cref="ClickEntrustOrWithdraw"/> looks for, for a failure message:
+    /// <c>SelectString entries=['a' | 'b'] target='c'</c>, or
+    /// <c>SelectString=(not open) target='c'</c>. Framework thread.
     /// </summary>
     // SAFETY: TryGetAddonByName yields the game's live addon pointer for this
     // frame or fails; AddonMaster only reads its entries within this call.
     public static unsafe string DescribeSelectString()
     {
+        var target = $"target='{EntrustOrWithdrawText}'";
         if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("SelectString", out var addon)
             || !GenericHelpers.IsAddonReady(addon))
-            return "SelectString=(not open)";
+            return $"SelectString=(not open) {target}";
         var ss = new AddonMaster.SelectString(addon);
-        return $"SelectString entries=[{string.Join(" | ", ss.Entries.Select(e => $"'{e.Text}'"))}]";
+        return $"SelectString entries=[{string.Join(" | ", ss.Entries.Select(e => $"'{e.Text}'"))}] {target}";
     }
 
     // Close-and-verify-gone pattern (mirror of AutoRetainer's
@@ -218,18 +222,50 @@ public static class RetainerWalk
     public static bool? CloseItemSearchResult(Func<bool> throttle) => CloseAddon("ItemSearchResult", throttle);
 
     /// <summary>
-    /// Close the retainer's inventory window, whichever of its two layouts is
-    /// open; true once neither is visible. <c>Close(true)</c> is this window's
-    /// exit: it returns to the retainer's <c>SelectString</c>, which
-    /// RetainerReach's multi-retainer runs rely on. The event menus covered by
-    /// the rule against <c>Close(true)</c> are different: hiding one leaves its
-    /// event running. Quit the <c>SelectString</c> afterwards with
-    /// <see cref="CloseSelectStringBack"/>.
+    /// Close the retainer's inventory window and return to the retainer's
+    /// <c>SelectString</c>; true once neither layout (<c>InventoryRetainerLarge</c>,
+    /// <c>InventoryRetainer</c>) is visible and the Retainer agent is inactive.
+    /// Quit the <c>SelectString</c> afterwards with <see cref="CloseSelectStringBack"/>.
+    ///
+    /// Mechanism: <c>Close(true)</c> on whichever layout is visible, then, if
+    /// the Retainer agent (<see cref="AgentId.Retainer"/>) is still active,
+    /// <c>Hide()</c> on the agent, each behind the caller's throttle, returning
+    /// false until the next tick sees the result. The agent owns the window:
+    /// FFXIVClientStructs <c>AgentRetainer</c> is the inventory-context handler
+    /// the native item command runs against, AutoRetainer requires it active
+    /// before every item command, and AutoRetainer leaves the window by hiding
+    /// it (<c>RetainerHandlers.CloseAgentRetainer</c>, which
+    /// <c>TaskVendorItems.CloseInventory</c> calls) and then selects Quit on
+    /// the same retainer <c>SelectString</c> (<c>RetainerHandlers.SelectQuit</c>).
+    /// So an inactive agent proves the window has exited rather than only its
+    /// addon being hidden, and hiding the agent leaves the menu the Quit step
+    /// needs. The rule against <c>Close(true)</c> on event menus (hiding one
+    /// leaves its event running) is why the agent state, not the addon's
+    /// visibility, is the postcondition here.
+    ///
+    /// Whether <c>Close(true)</c> alone deactivates the agent, or the
+    /// <c>Hide()</c> does that work, is settled by an in-game check; the step
+    /// ends at the same postcondition either way.
     /// </summary>
     public static bool? CloseRetainerInventory(Func<bool> throttle)
     {
         if (CloseAddon("InventoryRetainerLarge", throttle) != true) return false;
-        return CloseAddon("InventoryRetainer", throttle);
+        if (CloseAddon("InventoryRetainer", throttle) != true) return false;
+        return HideRetainerAgent(throttle);
+    }
+
+    // SAFETY: AgentModule.Instance() and GetAgentByInternalId return the
+    // game's own long-lived objects, both null-checked; IsAgentActive and Hide
+    // run on them within this call on the framework thread.
+    private static unsafe bool? HideRetainerAgent(Func<bool> throttle)
+    {
+        var module = AgentModule.Instance();
+        if (module == null) return true;
+        var agent = module->GetAgentByInternalId(AgentId.Retainer);
+        if (agent == null || !agent->IsAgentActive()) return true;
+        if (!throttle()) return false;
+        agent->Hide();
+        return false;
     }
 
     /// <summary>
