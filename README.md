@@ -133,12 +133,13 @@ laptop       12:00:01.000 [Gardener] tended bed 2
 | `POST /log` | appends plain lines to `live.log` |
 | `POST /records` | appends JSON lines to `records.jsonl`, adding `client` and `rx` (receive time); a line that is not a JSON object is kept as `{"kind":"invalid", "raw": ...}` |
 | `POST /file?plugin=&name=&ext=` | stores the body under `dumps/` as `<time>-<client>-<plugin>-<name>.<ext>` and answers with the path |
+| `POST /games` | stores one whole game file under `GAMESDIR`, named from the `X-Filename` header, and answers its SHA-256; a retry of the same bytes is a success, and different bytes under a taken name get a `-2` suffix instead of replacing it |
 | `GET /log`, `GET /records` | the tail of either file; `?n=200` for 200 lines, `?n=0` for all |
 | `GET /setup/<name>` | serves `setup/<name>.json`, for a plugin to load a capture setup |
 | `GET /health` | liveness check |
 
 `live.log` and `records.jsonl` each rotate to a `.1` file past 25 MB. `PORT`, `LOGFILE`,
-`RECORDSFILE`, `DUMPDIR`, `SETUPDIR`, `MAX_BYTES` and `MAX_DUMP_BYTES` override the defaults. To
+`RECORDSFILE`, `DUMPDIR`, `SETUPDIR`, `GAMESDIR`, `MAX_BYTES`, `MAX_DUMP_BYTES` and `MAX_GAME_BYTES` override the defaults. To
 read records in order, pass the rotated file first; jq reports it missing until the first rotation
 and still reads the second file:
 
@@ -430,9 +431,10 @@ sizing or tab overflow wrong; `HubWindow.FitHeight` caps a window at its content
 dotnet test XivHubPluginKit.Tests/XivHubPluginKit.Tests.csproj   # DevTelemetry, ListingsGate, PinchDecision, PinchPlanning (.NET 10 SDK)
 python3 test_devlog_server.py                                     # retry dedupe on /log
 python3 test_devlog_records.py                                    # /records
+python3 test_devlog_games.py                                      # /games
 ```
 
-The Python tests start their own server on ports 9901 and 9902. Everything else in the kit touches
+The Python tests start their own server on ports 9901, 9902 and 9903. Everything else in the kit touches
 the game and is tested by building and running a plugin that uses it.
 
 ## License

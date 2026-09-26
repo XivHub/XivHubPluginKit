@@ -17,6 +17,10 @@ Endpoints:
                  LOGFILE), one compact object per line; "client" and "rx" (receive time) are added
                  when absent, and a line that is not a JSON object is kept as kind "invalid"
   POST /file     one whole artefact -> DUMPDIR
+  POST /games    one whole game file -> GAMESDIR (default games/ beside LOGFILE), named
+                 from the X-Filename header; stored atomically, never over a different file of that
+                 name (identical content is a repeat success, a different one takes a -2, -3, ...
+                 suffix); answers the SHA-256 hex of the stored bytes
   GET  /log, /   tail of LOGFILE (?n=, default 500, 0 = all)
   GET  /records  tail of RECORDSFILE (?n=, default 500, 0 = all)
   GET  /setup/<name>  SETUPDIR/<name>.json as is (default ~/.cache/zhyra-devlog/setup/), 404 if
@@ -28,6 +32,7 @@ X-Devlog-Offset, and both files rotate to <name>.1 past MAX_BYTES.
 NOT for public exposure — no auth, plain HTTP, local network only.
 """
 import datetime
+import hashlib
 import http.server
 import json
 import os
@@ -52,6 +57,12 @@ SETUP_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 # one dump stays one readable unit instead of interleaving with whatever else is logging.
 DUMPDIR = pathlib.Path(os.environ.get("DUMPDIR", LOGFILE.parent / "dumps"))
 MAX_DUMP_BYTES = int(os.environ.get("MAX_DUMP_BYTES", str(8 * 1024 * 1024)))
+# Whole game files (one match each, MahjongAdvisor's GameRecorder) that the sender keeps until this
+# server echoes their hash, so they land in a folder of their own that nothing rotates.
+GAMESDIR = pathlib.Path(os.environ.get("GAMESDIR", LOGFILE.parent / "games"))
+MAX_GAME_BYTES = int(os.environ.get("MAX_GAME_BYTES", str(64 * 1024 * 1024)))
+GAME_EXT = ".jsonl"
+_games_lock = threading.Lock()
 
 
 def _rotate_if_needed(path=LOGFILE):
@@ -180,11 +191,53 @@ def _safe_stem(name):
     return stem or "dump"
 
 
+def _game_name(header):
+    """The stored file name for an X-Filename header: _safe_stem of it, always ending in .jsonl."""
+    stem = _safe_stem(header)
+    if stem.endswith(GAME_EXT):
+        stem = stem[:-len(GAME_EXT)].rstrip("-.") or "game"
+    return stem + GAME_EXT
+
+
+def _store_game(directory, name, body):
+    """Store body as directory/name without ever replacing a different file; return (path, sha256 hex).
+
+    A file of that name holding the same bytes is the sender's retry and counts as stored. One holding
+    other bytes is kept, and the body goes to the first free or identical name-2, name-3, ... instead.
+    The bytes are written to a temp file in the same folder, synced, then linked into place, so a
+    reader never sees half a file and a crash leaves at most a stray temp file.
+    """
+    digest = hashlib.sha256(body).hexdigest()
+    stem = name[:-len(GAME_EXT)]
+    directory.mkdir(parents=True, exist_ok=True)
+    with _games_lock:
+        for n in range(1, 1000):
+            target = directory / (name if n == 1 else f"{stem}-{n}{GAME_EXT}")
+            if target.exists():
+                if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
+                    return target, digest
+                continue
+            tmp = directory / f".{target.name}.{os.getpid()}.tmp"
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(body)
+                    f.flush()
+                    os.fsync(f.fileno())
+                # link, unlike rename, fails when the target exists instead of replacing it.
+                os.link(tmp, target)
+            finally:
+                tmp.unlink(missing_ok=True)
+            return target, digest
+    raise OSError(f"no free name for {name}")
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path, _, query = self.path.partition("?")
         if path.rstrip("/") == "/file":
             return self._save_file(query)
+        if path.rstrip("/") == "/games":
+            return self._save_game()
         if path.rstrip("/") == "/records":
             return self._save_records(query)
         length = int(self.headers.get("Content-Length", 0))
@@ -235,20 +288,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
             error = _append(RECORDSFILE, out, session, new_offset)
         self._stored(error)
 
+    def _refuse_too_large(self, length, limit):
+        """Answer 413 when length is over limit; True when it did.
+
+        The body is drained before answering. Replying with it unread makes the kernel reset the
+        connection while the client is still sending, and the client then sees a transport error
+        instead of this 413.
+        """
+        if length <= limit:
+            return False
+        remaining = length
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 1 << 16))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+        self._text(413, f"too large: {length} > {limit}\n")
+        return True
+
+    def _save_game(self):
+        """Store one POSTed game file under GAMESDIR (_store_game) and answer its SHA-256 hex."""
+        length = int(self.headers.get("Content-Length", 0))
+        if self._refuse_too_large(length, MAX_GAME_BYTES):
+            return
+        body = self.rfile.read(length)
+        if not body:
+            return self._text(400, "empty game file\n")
+        try:
+            target, digest = _store_game(GAMESDIR, _game_name(self.headers.get("X-Filename", "")), body)
+        except OSError as e:
+            return self._text(500, f"write failed: {e}\n")
+        sys.stdout.write(f"[devlog] game {target} ({len(body)} bytes)\n")
+        sys.stdout.flush()
+        self._text(200, digest + "\n")
+
     def _save_file(self, query):
         """Store one POSTed artefact under DUMPDIR and answer with the path it landed at."""
         length = int(self.headers.get("Content-Length", 0))
-        if length > MAX_DUMP_BYTES:
-            # Drain the body before answering. Replying with it unread makes the kernel reset the
-            # connection while the client is still sending, and the client then sees a transport
-            # error instead of this 413.
-            remaining = length
-            while remaining > 0:
-                chunk = self.rfile.read(min(remaining, 1 << 16))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-            return self._text(413, f"too large: {length} > {MAX_DUMP_BYTES}\n")
+        if self._refuse_too_large(length, MAX_DUMP_BYTES):
+            return
         body = self.rfile.read(length)
         params = urllib.parse.parse_qs(query)
         stem = _safe_stem(params.get("name", [""])[0])
