@@ -128,6 +128,75 @@ public static class RetainerWalk
         return true;
     }
 
+    private static string? _entrustOrWithdrawText;
+
+    // Addon sheet row 2378 is the retainer menu's "Entrust or withdraw items."
+    // in the client's language.
+    private static string EntrustOrWithdrawText
+        => _entrustOrWithdrawText ??= Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Addon>()
+            .GetRow(2378).Text.GetText(true);
+
+    /// <summary>
+    /// Click "Entrust or withdraw items" on the retainer <c>SelectString</c>,
+    /// which opens the retainer's inventory window and loads its
+    /// <c>RetainerPage*</c> containers. Found by the Addon sheet text rather
+    /// than by position the way <see cref="ClickSellItems"/> picks
+    /// <c>Entries[2]</c>: this entry's index is not confirmed stable across
+    /// retainer types and patches. Returns false while no entry matches, so
+    /// the caller's step budget decides when that is a failure;
+    /// <see cref="DescribeSelectString"/> names what the menu held.
+    /// </summary>
+    // SAFETY: TryGetAddonByName yields the game's live addon pointer for this
+    // frame or fails; AddonMaster reads its entries and Select fires the
+    // addon's own callback, all within this call.
+    public static unsafe bool? ClickEntrustOrWithdraw(Func<bool> throttle, Action rethrottle)
+    {
+        if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("SelectString", out var addon)
+            || !GenericHelpers.IsAddonReady(addon))
+        {
+            rethrottle();
+            return false;
+        }
+        var target = EntrustOrWithdrawText;
+        var ss = new AddonMaster.SelectString(addon);
+        foreach (var entry in ss.Entries)
+        {
+            if (!MenuEntryMatches(entry.Text, target)) continue;
+            if (!throttle()) return false;
+            entry.Select();
+            return true;
+        }
+        return false;
+    }
+
+    // Looser than CloseSelectStringBack's exact match: the sheet text and the
+    // drawn entry can differ by trailing punctuation, an auto-translate wrapper
+    // or stray whitespace, and an exact match would then silently find nothing.
+    private static bool MenuEntryMatches(string entryText, string target)
+    {
+        entryText = entryText.Trim();
+        target = target.Trim();
+        if (target.Length == 0) return false;
+        return entryText.StartsWith(target, StringComparison.OrdinalIgnoreCase)
+               || entryText.Contains(target, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The open <c>SelectString</c>'s entries, each quoted, for a failure
+    /// message: <c>SelectString entries=['a' | 'b']</c>, or
+    /// <c>SelectString=(not open)</c>. Framework thread.
+    /// </summary>
+    // SAFETY: TryGetAddonByName yields the game's live addon pointer for this
+    // frame or fails; AddonMaster only reads its entries within this call.
+    public static unsafe string DescribeSelectString()
+    {
+        if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("SelectString", out var addon)
+            || !GenericHelpers.IsAddonReady(addon))
+            return "SelectString=(not open)";
+        var ss = new AddonMaster.SelectString(addon);
+        return $"SelectString entries=[{string.Join(" | ", ss.Entries.Select(e => $"'{e.Text}'"))}]";
+    }
+
     // Close-and-verify-gone pattern (mirror of AutoRetainer's
     // RetainerHandlers.SelectQuit): while the addon is still visible, throttle
     // a Close call and return false so the next tick verifies; only an addon
@@ -147,6 +216,21 @@ public static class RetainerWalk
     public static bool? CloseContextMenu(Func<bool> throttle) => CloseAddon("ContextMenu", throttle);
     public static bool? CloseRetainerSellList(Func<bool> throttle) => CloseAddon("RetainerSellList", throttle);
     public static bool? CloseItemSearchResult(Func<bool> throttle) => CloseAddon("ItemSearchResult", throttle);
+
+    /// <summary>
+    /// Close the retainer's inventory window, whichever of its two layouts is
+    /// open; true once neither is visible. <c>Close(true)</c> is this window's
+    /// exit: it returns to the retainer's <c>SelectString</c>, which
+    /// RetainerReach's multi-retainer runs rely on. The event menus covered by
+    /// the rule against <c>Close(true)</c> are different: hiding one leaves its
+    /// event running. Quit the <c>SelectString</c> afterwards with
+    /// <see cref="CloseSelectStringBack"/>.
+    /// </summary>
+    public static bool? CloseRetainerInventory(Func<bool> throttle)
+    {
+        if (CloseAddon("InventoryRetainerLarge", throttle) != true) return false;
+        return CloseAddon("InventoryRetainer", throttle);
+    }
 
     /// <summary>
     /// Click the localised "Quit" entry on the retainer <c>SelectString</c>,
