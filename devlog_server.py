@@ -18,9 +18,10 @@ Endpoints:
                  when absent, and a line that is not a JSON object is kept as kind "invalid"
   POST /file     one whole artefact -> DUMPDIR
   POST /games    one whole game file -> GAMESDIR (default games/ beside LOGFILE), named
-                 from the X-Filename header; stored atomically, never over a different file of that
-                 name (identical content is a repeat success, a different one takes a -2, -3, ...
-                 suffix); answers the SHA-256 hex of the stored bytes
+                 from the X-Filename header, its extension always .jsonl or .jsonl.gz to match
+                 whether the body starts with the gzip magic bytes; stored atomically, never over a
+                 different file of that name (identical content is a repeat success, a different one
+                 takes a -2, -3, ... suffix); answers the SHA-256 hex of the stored bytes
   GET  /log, /   tail of LOGFILE (?n=, default 500, 0 = all)
   GET  /records  tail of RECORDSFILE (?n=, default 500, 0 = all)
   GET  /setup/<name>  SETUPDIR/<name>.json as is (default ~/.cache/zhyra-devlog/setup/), 404 if
@@ -62,6 +63,8 @@ MAX_DUMP_BYTES = int(os.environ.get("MAX_DUMP_BYTES", str(8 * 1024 * 1024)))
 GAMESDIR = pathlib.Path(os.environ.get("GAMESDIR", LOGFILE.parent / "games"))
 MAX_GAME_BYTES = int(os.environ.get("MAX_GAME_BYTES", str(64 * 1024 * 1024)))
 GAME_EXT = ".jsonl"
+GAME_EXT_GZ = ".jsonl.gz"
+GZIP_MAGIC = b"\x1f\x8b"
 _games_lock = threading.Lock()
 
 
@@ -191,12 +194,21 @@ def _safe_stem(name):
     return stem or "dump"
 
 
-def _game_name(header):
-    """The stored file name for an X-Filename header: _safe_stem of it, always ending in .jsonl."""
+def _game_ext(body):
+    """.jsonl.gz for a gzipped body (its first two bytes are the gzip magic), else .jsonl."""
+    return GAME_EXT_GZ if body[:2] == GZIP_MAGIC else GAME_EXT
+
+
+def _game_name(header, body):
+    """The stored file name for an X-Filename header: _safe_stem of it, always ending in the
+    extension the body's own bytes imply (.jsonl.gz for gzip, else .jsonl), whatever the header said."""
+    ext = _game_ext(body)
     stem = _safe_stem(header)
-    if stem.endswith(GAME_EXT):
-        stem = stem[:-len(GAME_EXT)].rstrip("-.") or "game"
-    return stem + GAME_EXT
+    for other in (GAME_EXT_GZ, GAME_EXT):
+        if stem.endswith(other):
+            stem = stem[:-len(other)].rstrip("-.") or "game"
+            break
+    return stem + ext
 
 
 def _store_game(directory, name, body):
@@ -208,11 +220,12 @@ def _store_game(directory, name, body):
     reader never sees half a file and a crash leaves at most a stray temp file.
     """
     digest = hashlib.sha256(body).hexdigest()
-    stem = name[:-len(GAME_EXT)]
+    ext = GAME_EXT_GZ if name.endswith(GAME_EXT_GZ) else GAME_EXT
+    stem = name[:-len(ext)]
     directory.mkdir(parents=True, exist_ok=True)
     with _games_lock:
         for n in range(1, 1000):
-            target = directory / (name if n == 1 else f"{stem}-{n}{GAME_EXT}")
+            target = directory / (name if n == 1 else f"{stem}-{n}{ext}")
             if target.exists():
                 if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
                     return target, digest
@@ -315,7 +328,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not body:
             return self._text(400, "empty game file\n")
         try:
-            target, digest = _store_game(GAMESDIR, _game_name(self.headers.get("X-Filename", "")), body)
+            target, digest = _store_game(GAMESDIR, _game_name(self.headers.get("X-Filename", ""), body), body)
         except OSError as e:
             return self._text(500, f"write failed: {e}\n")
         sys.stdout.write(f"[devlog] game {target} ({len(body)} bytes)\n")
