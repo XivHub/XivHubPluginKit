@@ -365,18 +365,24 @@ public sealed class PinchEngine : IDisposable
     /// so the caller reports nothing for it. An exception inside the session is
     /// logged and the counts so far are returned. <paramref name="onRetainer"/>
     /// gets each repriced retainer's result as soon as it is left, so a caller
-    /// can record when that retainer was priced.
+    /// can record when that retainer was priced. <paramref name="shouldOpen"/>
+    /// gets each retainer with listings and its listing count before it is
+    /// opened, on the framework thread; false leaves it unopened, its listings
+    /// counted as skipped, and it reaches neither the plan nor
+    /// <paramref name="onRetainer"/>.
     /// </summary>
     public async Task<PinchSessionResult?> RunAllAsync(
-        PlanFn? plan, CancellationToken ct, Action<PinchRetainerResult>? onRetainer = null)
+        PlanFn? plan, CancellationToken ct, Action<PinchRetainerResult>? onRetainer = null,
+        Func<PinchRetainer, int, bool>? shouldOpen = null)
     {
         if (!TryEnterRun()) return null;
-        try { return await RunAllCoreAsync(plan, ct, onRetainer); }
+        try { return await RunAllCoreAsync(plan, ct, onRetainer, shouldOpen); }
         finally { ExitRun(); }
     }
 
     private async Task<PinchSessionResult?> RunAllCoreAsync(
-        PlanFn? plan, CancellationToken ct, Action<PinchRetainerResult>? onRetainer)
+        PlanFn? plan, CancellationToken ct, Action<PinchRetainerResult>? onRetainer,
+        Func<PinchRetainer, int, bool>? shouldOpen)
     {
         if (!await Svc.Framework.RunOnFrameworkThread(RetainerWalk.IsRetainerListReady))
         {
@@ -425,6 +431,16 @@ public sealed class PinchEngine : IDisposable
                     continue;
                 }
 
+                var retainer = new PinchRetainer(cid, name);
+                if (shouldOpen is not null
+                    && !await Svc.Framework.RunOnFrameworkThread(() => shouldOpen(retainer, marketCount)))
+                {
+                    KitServices.Chat.Print($"{KitServices.LogPrefix} Skip {name}: nothing to reprice");
+                    skipped += marketCount;
+                    rowsAttempted += marketCount;
+                    continue;
+                }
+
                 // Phase 1: open this retainer's sell list so the game loads its
                 // RetainerMarket container. Listings are read live (phase 2)
                 // rather than from a cache, which can miss items listed earlier
@@ -451,7 +467,6 @@ public sealed class PinchEngine : IDisposable
                     continue;
                 }
 
-                var retainer = new PinchRetainer(cid, name);
                 RetainerPlan? p = plan is null ? AllLive(rows) : await plan(retainer, rows, token);
                 if (p is null)
                 {
