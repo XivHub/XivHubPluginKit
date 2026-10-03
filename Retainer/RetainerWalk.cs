@@ -229,8 +229,8 @@ public static class RetainerWalk
     ///
     /// Mechanism: <c>Hide()</c> on the Retainer agent (<see cref="AgentId.Retainer"/>)
     /// while it is active, then <c>Close(true)</c> on whichever layout is still
-    /// visible, each behind the caller's throttle, returning false until the
-    /// next tick sees the result. The agent goes first so a caller that stops
+    /// visible, each behind the caller's throttle, returning false until a
+    /// later call sees all of it done. The agent goes first so a caller that stops
     /// calling once the window is gone, as <c>ConversationUnwinder</c> does,
     /// still ends with the agent inactive. The agent owns the window:
     /// FFXIVClientStructs <c>AgentRetainer</c> is the inventory-context handler
@@ -251,9 +251,14 @@ public static class RetainerWalk
     /// </summary>
     public static bool? CloseRetainerInventory(Func<bool> throttle)
     {
-        if (HideRetainerAgent(throttle) != true) return false;
-        if (CloseAddon("InventoryRetainerLarge", throttle) != true) return false;
-        return CloseAddon("InventoryRetainer", throttle);
+        // Every action runs in one call, each behind the throttle, so a caller
+        // that calls this several times in one frame (a synchronous cleanup
+        // with an always-true throttle) still closes the layout while the
+        // agent reads active for the rest of that frame.
+        bool agent = HideRetainerAgent(throttle) == true;
+        bool large = CloseAddon("InventoryRetainerLarge", throttle) == true;
+        bool small = CloseAddon("InventoryRetainer", throttle) == true;
+        return agent && large && small;
     }
 
     // SAFETY: AgentModule.Instance() and GetAgentByInternalId return the
