@@ -6,6 +6,14 @@ namespace XivHubPluginKit.Pinch;
 public static class PinchDecision
 {
     /// <summary>
+    /// A listing priced more than this many times the cheapest competitor is a
+    /// gil transfer: priced to move an amount to another of our characters,
+    /// not to sell. Repricing it would ruin the transfer, so it is left alone.
+    /// The server applies the same ratio when it judges what is due.
+    /// </summary>
+    public const uint TransferPriceRatio = 10;
+
+    /// <summary>
     /// Price one listing against what the board said.
     ///
     /// With a competitor, take the highest price still under the cheapest one.
@@ -34,6 +42,9 @@ public static class PinchDecision
     {
         uint target;
         string why;
+
+        if (result.Competitor > 0 && (ulong)curPrice > (ulong)result.Competitor * TransferPriceRatio)
+            return new PriceDecision(null, $"looks like a gil transfer ({curPrice:N0} against {result.Competitor:N0}); left alone", true);
 
         if (result.Competitor > 0)
         {
