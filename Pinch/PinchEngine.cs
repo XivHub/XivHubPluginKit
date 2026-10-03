@@ -363,16 +363,20 @@ public sealed class PinchEngine : IDisposable
     /// Reprice every retainer in the roster, from the open <c>RetainerList</c>.
     /// Returns null when no session ran (already busy, or the list is not open),
     /// so the caller reports nothing for it. An exception inside the session is
-    /// logged and the counts so far are returned.
+    /// logged and the counts so far are returned. <paramref name="onRetainer"/>
+    /// gets each repriced retainer's result as soon as it is left, so a caller
+    /// can record when that retainer was priced.
     /// </summary>
-    public async Task<PinchSessionResult?> RunAllAsync(PlanFn? plan, CancellationToken ct)
+    public async Task<PinchSessionResult?> RunAllAsync(
+        PlanFn? plan, CancellationToken ct, Action<PinchRetainerResult>? onRetainer = null)
     {
         if (!TryEnterRun()) return null;
-        try { return await RunAllCoreAsync(plan, ct); }
+        try { return await RunAllCoreAsync(plan, ct, onRetainer); }
         finally { ExitRun(); }
     }
 
-    private async Task<PinchSessionResult?> RunAllCoreAsync(PlanFn? plan, CancellationToken ct)
+    private async Task<PinchSessionResult?> RunAllCoreAsync(
+        PlanFn? plan, CancellationToken ct, Action<PinchRetainerResult>? onRetainer)
     {
         if (!await Svc.Framework.RunOnFrameworkThread(RetainerWalk.IsRetainerListReady))
         {
@@ -464,6 +468,7 @@ public sealed class PinchEngine : IDisposable
                 EnqueueLeaveRetainer();
                 await DrainTasks();
                 var result = Result(retainer, rows.Count, p, null);
+                onRetainer?.Invoke(result);
 
                 retainers++;
                 reprices += result.Reprices;
