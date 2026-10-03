@@ -87,6 +87,17 @@ public sealed class PinchEngine : IDisposable
         lock (_liveWrites) _liveWrites.Add(item);
     }
 
+    private readonly List<PinchHold> _liveHolds = new();
+
+    // Locked for the same reason as _liveWrites. One per item and price: a
+    // retainer's further stacks held at the same price say nothing new.
+    private void RecordLiveHold(uint itemId, bool hq, uint price, uint competitor)
+    {
+        var hold = new PinchHold(itemId, hq, price, competitor);
+        lock (_liveHolds)
+            if (!_liveHolds.Contains(hold)) _liveHolds.Add(hold);
+    }
+
     /// <summary>
     /// Move what the board path wrote into a retainer's write list, and say
     /// how many there were. Call once, after the queue has drained.
@@ -209,8 +220,8 @@ public sealed class PinchEngine : IDisposable
         => Svc.Framework.RunOnFrameworkThread(
             () => RetainerMarket.ReadLive(log).Where(r => r.Price > 0).ToList());
 
-    private static Task<List<(string Name, bool Hq)>> ReadVisualRows()
-        => Svc.Framework.RunOnFrameworkThread(RetainerWalk.ReadSellListRows);
+    private static Task<List<RetainerWalk.SellListRow>> ReadVisualRows()
+        => Svc.Framework.RunOnFrameworkThread(RetainerWalk.ReadSellList);
 
     /// <summary>
     /// Reprice the retainer whose sell list the player has open, and leave the
@@ -521,7 +532,13 @@ public sealed class PinchEngine : IDisposable
     {
         var writes = new List<PinchWrite>();
         TakeLiveWrites(writes);
-        return new PinchRetainerResult(r.Cid, r.Name, rows, writes.Count, plan.Skipped, plan.NoData, writes, dry);
+        List<PinchHold> holds;
+        lock (_liveHolds)
+        {
+            holds = new List<PinchHold>(_liveHolds);
+            _liveHolds.Clear();
+        }
+        return new PinchRetainerResult(r.Cid, r.Name, rows, writes.Count, plan.Skipped, plan.NoData, writes, dry, holds);
     }
 
     public void AbortAll()
@@ -608,13 +625,14 @@ public sealed class PinchEngine : IDisposable
     private void EnqueuePinchTasks(
         RetainerPlan plan,
         IReadOnlyList<RetainerMarketRow> rows,
-        IReadOnlyList<(string, bool)> visual,
+        IReadOnlyList<RetainerWalk.SellListRow> visual,
         bool closeOuterList,
         bool dryRun,
         out DryRunVisit? dry)
     {
         dry = null;
         lock (_liveWrites) _liveWrites.Clear();
+        lock (_liveHolds) _liveHolds.Clear();
 
         // Early-exit budget: number of ROWS still expected to need a window
         // opened (live-lookup rows). Once that many have been resolved (a real
@@ -645,7 +663,8 @@ public sealed class PinchEngine : IDisposable
                 // reprice is not.
                 _log.Warning("Pinch: could not read the sell list; visiting every row");
             }
-            var visit = PinchPlanning.RowsToVisit(visual, rows.Count, plan.Live);
+            var visit = PinchPlanning.RowsToVisit(
+                visual.Select(v => (v.Name, v.Hq)).ToList(), rows.Count, plan.Live);
             if (visual.Count > 0)
                 _log.Information("Pinch: {Visit} of {Rows} row(s) need opening", visit.Count, visual.Count);
 
@@ -663,6 +682,8 @@ public sealed class PinchEngine : IDisposable
             {
                 int captured = rowIndex;
                 _tasks.Enqueue(BeginRow);
+                if (captured < visual.Count)
+                    _tasks.Enqueue(() => SkipIfSettled(visual[captured], plan));
                 _tasks.Enqueue(() => OpenItemContextMenu(captured));
                 _tasks.Enqueue(ClickAdjustPrice);
                 _tasks.Enqueue(() => ApplyRepriceFromWindow(plan));
@@ -717,6 +738,28 @@ public sealed class PinchEngine : IDisposable
         return true;
     }
 
+    // A row whose item this run's board already answered, at the price the
+    // list shows, is left shut when that answer would change nothing. The
+    // visit list is fixed before any of this retainer's lookups land, so
+    // without this every further stack of an item opens its window only to
+    // cancel it. Does not touch the early-exit budget: whether this row was
+    // counted in it is not known here, and a budget left too large only
+    // costs the early exit, never a row.
+    private bool? SkipIfSettled(RetainerWalk.SellListRow row, RetainerPlan plan)
+    {
+        if (row.Price == 0 || row.Name.Length == 0
+            || !plan.Live.TryGetValue((row.Name, row.Hq), out uint itemId)
+            || !_probe.TryGetCached(itemId, row.Hq, out LivePrice cached)
+            || PinchPlanning.NeedsVisit(cached, row.Price, _profitFloor(itemId), _settings().SkipIfNoCompetitor))
+            return true;
+        if (PinchDecision.Decide(cached, row.Price, _profitFloor(itemId), _settings().SkipIfNoCompetitor).Held)
+            RecordLiveHold(itemId, row.Hq, row.Price, cached.Competitor);
+        _log.Information("Pinch: {Item} (hq={Hq}) at {Price:N0} already settled by this run's board read; not opened",
+            row.Name, row.Hq, row.Price);
+        _rowUnavailable = true;
+        return true;
+    }
+
     // Give up on the current row instead of letting the step time out and take
     // the whole queue with it. Returns the terminal value for the calling step.
     private bool? SkipRow(string reason)
@@ -741,7 +784,7 @@ public sealed class PinchEngine : IDisposable
         // The matching ClickAdjustPrice/ApplyRepriceFromWindow steps see no open
         // ContextMenu/RetainerSell and likewise short-circuit (see _rowsRemaining
         // checks there). Saves ~0.6s per already-at-target row.
-        if (_rowsRemaining <= 0)
+        if (_rowsRemaining <= 0 || _rowUnavailable)
             return true;
         if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("ContextMenu", out var cm) && cm->IsVisible)
             return true;
@@ -919,6 +962,7 @@ public sealed class PinchEngine : IDisposable
         {
             _log.Information("Pinch: {Item} (hq={Hq}) — {Why}; holding at {Price:N0}",
                 name, hq, d.Why, curPrice);
+            if (d.Held) RecordLiveHold(_liveItemId, hq, curPrice, result.Competitor);
             if (d.Announce) Announce(name, hq, null, curPrice, d.Why);
             Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel (no change)
             return;

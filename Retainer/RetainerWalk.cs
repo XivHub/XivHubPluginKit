@@ -366,9 +366,16 @@ public static class RetainerWalk
         return values[SellListRowCountIndex].Int;
     }
 
-    public static unsafe List<(string Name, bool Hq)> ReadSellListRows()
+    /// <summary>One row of the open sell list as the list draws it. Price is
+    /// the unit asking price, 0 when the text held no digits.</summary>
+    public readonly record struct SellListRow(string Name, bool Hq, uint Price);
+
+    public static List<(string Name, bool Hq)> ReadSellListRows()
+        => ReadSellList().Select(r => (r.Name, r.Hq)).ToList();
+
+    public static unsafe List<SellListRow> ReadSellList()
     {
-        var rows = new List<(string, bool)>();
+        var rows = new List<SellListRow>();
         if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerSellList", out var addon)
             || !GenericHelpers.IsAddonReady(addon))
             return rows;
@@ -378,17 +385,32 @@ public static class RetainerWalk
         for (int i = 0; i < count; i++)
         {
             int idx = SellListFirstRow + i * SellListRowStride + 1;
-            if (idx >= addon->AtkValuesCount) break;
+            if (idx + 2 >= addon->AtkValuesCount) break;
             string raw = ReadAtkString(values[idx]);
             if (string.IsNullOrEmpty(raw))
             {
                 // A row we cannot name is a row we must not act on.
-                rows.Add((string.Empty, false));
+                rows.Add(new SellListRow(string.Empty, false, 0));
                 continue;
             }
-            rows.Add((RetainerWalk.NormalizeItemName(raw), RetainerWalk.HasHqGlyph(raw)));
+            rows.Add(new SellListRow(RetainerWalk.NormalizeItemName(raw), RetainerWalk.HasHqGlyph(raw),
+                                     ParseListPrice(ReadAtkString(values[idx + 2]))));
         }
         return rows;
+    }
+
+    // The price arrives formatted for the client's locale ("79,897",
+    // "79.897"), so the digits alone are the number.
+    private static uint ParseListPrice(string text)
+    {
+        ulong n = 0;
+        foreach (char c in text)
+        {
+            if (c < '0' || c > '9') continue;
+            n = n * 10 + (ulong)(c - '0');
+            if (n > uint.MaxValue) return 0;
+        }
+        return (uint)n;
     }
 
     // The value is a raw SeString, not rendered text: the item name arrives

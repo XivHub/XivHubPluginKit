@@ -81,7 +81,7 @@ public static class PinchDecision
         {
             return curPrice < floor
                 ? new PriceDecision((uint)floor, $"was under the {floor:N0} profit floor", true)
-                : new PriceDecision(null, $"held; {why} nets less than the {floor:N0} profit floor", true);
+                : new PriceDecision(null, $"held; {why} nets less than the {floor:N0} profit floor", true, Held: true);
         }
 
         return target == curPrice

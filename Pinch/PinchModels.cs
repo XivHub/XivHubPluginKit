@@ -11,10 +11,16 @@ public readonly record struct PinchSettings(
 /// it is, plus the phrase that explains the choice and whether it is worth a
 /// chat announce.
 /// </summary>
-public readonly record struct PriceDecision(uint? Write, string Why, bool Announce);
+/// <param name="Held">Left at its price because undercutting the competitor
+/// would net less than the profit floor.</param>
+public readonly record struct PriceDecision(uint? Write, string Why, bool Announce, bool Held = false);
 
 /// <summary>One price actually written, for a caller's summary and events.</summary>
 public readonly record struct PinchWrite(uint ItemId, bool Hq, uint OldPrice, uint NewPrice);
+
+/// <summary>A listing held at <paramref name="Price"/> because undercutting
+/// <paramref name="Competitor"/> would net less than the profit floor.</summary>
+public readonly record struct PinchHold(uint ItemId, bool Hq, uint Price, uint Competitor);
 
 /// <summary>One retainer queued for a run.</summary>
 public readonly record struct PinchRetainer(ulong Cid, string Name);
@@ -41,7 +47,7 @@ public readonly record struct DryRunVisit(int Visit, int Total);
 /// <summary>Outcome of one retainer's run.</summary>
 public readonly record struct PinchRetainerResult(
     ulong Cid, string Name, int Rows, int Reprices, int Skipped, int NoData,
-    IReadOnlyList<PinchWrite> Writes, DryRunVisit? DryRun);
+    IReadOnlyList<PinchWrite> Writes, DryRunVisit? DryRun, IReadOnlyList<PinchHold>? Holds = null);
 
 /// <summary>Outcome of a whole-roster session.</summary>
 public readonly record struct PinchSessionResult(

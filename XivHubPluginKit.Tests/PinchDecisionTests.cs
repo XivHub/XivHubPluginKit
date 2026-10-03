@@ -131,6 +131,7 @@ public class PinchDecisionTests
         var d = PinchDecision.Decide(result, curPrice: 600, floor: 520, skipIfNoCompetitor: false);
 
         Assert.Null(d.Write);
+        Assert.True(d.Held);
         Assert.Equal("held; undercutting 500 nets less than the 520 profit floor", d.Why);
     }
 
@@ -142,6 +143,7 @@ public class PinchDecisionTests
         var d = PinchDecision.Decide(result, curPrice: 510, floor: 520, skipIfNoCompetitor: false);
 
         Assert.Equal((uint?)520, d.Write);
+        Assert.False(d.Held);
         Assert.Equal("was under the 520 profit floor", d.Why);
     }
 
