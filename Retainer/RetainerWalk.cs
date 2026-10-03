@@ -227,10 +227,12 @@ public static class RetainerWalk
     /// <c>InventoryRetainer</c>) is visible and the Retainer agent is inactive.
     /// Quit the <c>SelectString</c> afterwards with <see cref="CloseSelectStringBack"/>.
     ///
-    /// Mechanism: <c>Close(true)</c> on whichever layout is visible, then, if
-    /// the Retainer agent (<see cref="AgentId.Retainer"/>) is still active,
-    /// <c>Hide()</c> on the agent, each behind the caller's throttle, returning
-    /// false until the next tick sees the result. The agent owns the window:
+    /// Mechanism: <c>Hide()</c> on the Retainer agent (<see cref="AgentId.Retainer"/>)
+    /// while it is active, then <c>Close(true)</c> on whichever layout is still
+    /// visible, each behind the caller's throttle, returning false until the
+    /// next tick sees the result. The agent goes first so a caller that stops
+    /// calling once the window is gone, as <c>ConversationUnwinder</c> does,
+    /// still ends with the agent inactive. The agent owns the window:
     /// FFXIVClientStructs <c>AgentRetainer</c> is the inventory-context handler
     /// the native item command runs against, AutoRetainer requires it active
     /// before every item command, and AutoRetainer leaves the window by hiding
@@ -243,15 +245,15 @@ public static class RetainerWalk
     /// leaves its event running) is why the agent state, not the addon's
     /// visibility, is the postcondition here.
     ///
-    /// Whether <c>Close(true)</c> alone deactivates the agent, or the
-    /// <c>Hide()</c> does that work, is settled by an in-game check; the step
-    /// ends at the same postcondition either way.
+    /// Whether <c>Hide()</c> alone also closes the layout, or the
+    /// <c>Close(true)</c> does that work, is settled by an in-game check; the
+    /// step ends at the same postcondition either way.
     /// </summary>
     public static bool? CloseRetainerInventory(Func<bool> throttle)
     {
+        if (HideRetainerAgent(throttle) != true) return false;
         if (CloseAddon("InventoryRetainerLarge", throttle) != true) return false;
-        if (CloseAddon("InventoryRetainer", throttle) != true) return false;
-        return HideRetainerAgent(throttle);
+        return CloseAddon("InventoryRetainer", throttle);
     }
 
     // SAFETY: AgentModule.Instance() and GetAgentByInternalId return the
