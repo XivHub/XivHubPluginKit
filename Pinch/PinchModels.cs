@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using XivHubPluginKit.Retainer;
 
 namespace XivHubPluginKit.Pinch;
 
@@ -44,10 +45,14 @@ public sealed class RetainerPlan
 /// <summary>Row counts for a dry run that never opened a window.</summary>
 public readonly record struct DryRunVisit(int Visit, int Total);
 
-/// <summary>Outcome of one retainer's run.</summary>
+/// <summary>Outcome of one retainer's run. <see cref="Listings"/> is the
+/// retainer's priced listings read from game memory after the writes, before
+/// the sell list closed; null when the run never got that far (a dry run, an
+/// abort, a cancel).</summary>
 public readonly record struct PinchRetainerResult(
     ulong Cid, string Name, int Rows, int Reprices, int Skipped, int NoData,
-    IReadOnlyList<PinchWrite> Writes, DryRunVisit? DryRun, IReadOnlyList<PinchHold>? Holds = null);
+    IReadOnlyList<PinchWrite> Writes, DryRunVisit? DryRun, IReadOnlyList<PinchHold>? Holds = null,
+    IReadOnlyList<RetainerMarketRow>? Listings = null);
 
 /// <summary>Outcome of a whole-roster session.</summary>
 public readonly record struct PinchSessionResult(

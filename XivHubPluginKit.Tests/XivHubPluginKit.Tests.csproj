@@ -23,6 +23,7 @@
     <Compile Include="..\Board\BoardModels.cs" Link="Board\BoardModels.cs" />
     <Compile Include="..\Board\ListingsGate.cs" Link="Board\ListingsGate.cs" />
     <Compile Include="..\Board\BoardObservation.cs" Link="Board\BoardObservation.cs" />
+    <Compile Include="..\Retainer\RetainerMarketRow.cs" Link="Retainer\RetainerMarketRow.cs" />
     <Compile Include="..\Pinch\PinchModels.cs" Link="Pinch\PinchModels.cs" />
     <Compile Include="..\Pinch\PinchDecision.cs" Link="Pinch\PinchDecision.cs" />
     <Compile Include="..\Pinch\PinchPlanning.cs" Link="Pinch\PinchPlanning.cs" />

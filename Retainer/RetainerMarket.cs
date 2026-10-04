@@ -5,11 +5,6 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace XivHubPluginKit.Retainer;
 
-/// <summary>
-/// A single retainer market slot row from a live memory read.
-/// </summary>
-public readonly record struct RetainerMarketRow(uint Slot, uint ItemId, bool Hq, uint Qty, uint Price);
-
 public static class RetainerMarket
 {
     /// <summary>

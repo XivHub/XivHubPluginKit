@@ -89,6 +89,24 @@ public sealed class PinchEngine : IDisposable
 
     private readonly List<PinchHold> _liveHolds = new();
 
+    // The retainer's listings as the game holds them once its rows are
+    // written, read before the sell list closes (the container is loaded only
+    // while it is open). Null until that read runs. Locked like _liveWrites.
+    private List<RetainerMarketRow>? _liveListings;
+    private readonly object _liveListingsLock = new();
+
+    // An empty read is left null rather than reported: a consumer diffing
+    // successive shelves would take an unloaded container for every listing
+    // gone at once, and a retainer selling out mid-run is far rarer.
+    private bool? CaptureListings()
+    {
+        if (!CanPinchNow()) return true;
+        var rows = RetainerMarket.ReadLive(_log).Where(r => r.Price > 0).ToList();
+        if (rows.Count > 0)
+            lock (_liveListingsLock) _liveListings = rows;
+        return true;
+    }
+
     // Locked for the same reason as _liveWrites. One per item and price: a
     // retainer's further stacks held at the same price say nothing new.
     private void RecordLiveHold(uint itemId, bool hq, uint price, uint competitor)
@@ -538,7 +556,13 @@ public sealed class PinchEngine : IDisposable
             holds = new List<PinchHold>(_liveHolds);
             _liveHolds.Clear();
         }
-        return new PinchRetainerResult(r.Cid, r.Name, rows, writes.Count, plan.Skipped, plan.NoData, writes, dry, holds);
+        List<RetainerMarketRow>? listings;
+        lock (_liveListingsLock)
+        {
+            listings = _liveListings;
+            _liveListings = null;
+        }
+        return new PinchRetainerResult(r.Cid, r.Name, rows, writes.Count, plan.Skipped, plan.NoData, writes, dry, holds, listings);
     }
 
     public void AbortAll()
@@ -633,6 +657,7 @@ public sealed class PinchEngine : IDisposable
         dry = null;
         lock (_liveWrites) _liveWrites.Clear();
         lock (_liveHolds) _liveHolds.Clear();
+        lock (_liveListingsLock) _liveListings = null;
 
         // Early-exit budget: number of ROWS still expected to need a window
         // opened (live-lookup rows). Once that many have been resolved (a real
@@ -690,14 +715,15 @@ public sealed class PinchEngine : IDisposable
             }
         }
 
-        EnqueueTeardown(closeOuterList);
+        EnqueueTeardown(closeOuterList, captureListings: true);
     }
 
-    private void EnqueueTeardown(bool closeOuterList = true)
+    private void EnqueueTeardown(bool closeOuterList = true, bool captureListings = false)
     {
         _tasks.Enqueue(CloseItemSearchResult);
         _tasks.Enqueue(CloseRetainerSell);
         _tasks.Enqueue(CloseContextMenu);
+        if (captureListings) _tasks.Enqueue(CaptureListings);
         if (closeOuterList) _tasks.Enqueue(CloseRetainerSellList);
     }
 
