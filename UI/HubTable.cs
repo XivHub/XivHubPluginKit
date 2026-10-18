@@ -73,6 +73,15 @@ public static class HubTable
         ImGui.TextColored(color, text);
     }
 
+    /// <summary>A cell that wraps at its column's edge, for a stretch column holding a sentence (a
+    /// reason, a note): <see cref="Cell(Vector4, string)"/> draws one line, which the column clips.</summary>
+    public static void Wrapped(Vector4 color, string text)
+    {
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        HubText.Colored(color, text);
+    }
+
     /// <summary>A cell right-aligned against the column's edge, for a quantity or a gil amount next
     /// to a label column: a column of numbers reads by its ones digit lining up, not its first
     /// digit.</summary>

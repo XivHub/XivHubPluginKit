@@ -66,8 +66,9 @@ it before every commit that touches UI code.
   id when its columns change); `End()` closes it. `Stretch(name, weight, extra)` and `Fit(name, extra)`
   replace `TableSetupColumn` for a name column and a fixed one respectively (see "Tables and tabs"
   below for why a pixel width is wrong; a `Fit` column can't be dragged, which is what keeps it fitted); `Icon(id, size, extra)` is the one legitimate fixed-pixel column,
-  scaled by `ImGuiHelpers.GlobalScale`. `Cell(text)`, `Cell(color, text)` and `Number(text)`
-  (right-aligned) are the per-cell draws.
+  scaled by `ImGuiHelpers.GlobalScale`. `Cell(text)`, `Cell(color, text)`, `Number(text)`
+  (right-aligned) and `Wrapped(color, text)` (wraps at the column edge, for a sentence in a stretch
+  column) are the per-cell draws.
 - **Tabs**: `HubTabs.Begin(id)` / `End()` is `BeginTabBar`/`EndTabBar` with `FittingPolicyScroll`
   already set.
 - **Window height**: `HubWindow.FitHeight(this)`, called at the end of a `Window.Draw()`, caps that
