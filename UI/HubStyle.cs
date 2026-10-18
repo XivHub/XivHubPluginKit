@@ -257,7 +257,14 @@ public static class HubStyle
     /// untouched, and a scope that dressed one button anyway would leave a single
     /// themed control in an otherwise default window.
     /// </para>
-    public static IDisposable Primary() => Enabled ? new PrimaryScope() : NullScope.Instance;
+    /// <para>
+    /// Also a no-op inside <c>BeginDisabled</c>/<c>ImRaii.Disabled</c>: disabling multiplies the
+    /// whole style alpha, which turns the dark text on gold into dark text on a half-transparent
+    /// gold over the dark window, unreadable. A disabled primary draws as any disabled button.
+    /// The check reads the item flags when the scope opens, so open it inside the disabled scope.
+    /// </para>
+    public static IDisposable Primary() =>
+        Enabled && (ImGuiP.GetItemFlags() & ImGuiItemFlags.Disabled) == 0 ? new PrimaryScope() : NullScope.Instance;
 
     private sealed class NullScope : IDisposable
     {
