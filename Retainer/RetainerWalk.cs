@@ -222,6 +222,22 @@ public static class RetainerWalk
     public static bool? CloseItemSearchResult(Func<bool> throttle) => CloseAddon("ItemSearchResult", throttle);
 
     /// <summary>
+    /// Leave the retainer list through its own callback (<c>-1</c>), the way AutoRetainer does
+    /// (<c>RetainerListHandlers.CloseRetainerList</c>), so the bell's event ends and the player
+    /// can move. True once the list is gone.
+    /// </summary>
+    public static unsafe bool? CloseRetainerList(Func<bool> throttle)
+    {
+        if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerList", out var addon) || !addon->IsVisible)
+            return true;
+        if (!GenericHelpers.IsAddonReady(addon) || !throttle()) return false;
+        var v = stackalloc AtkValue[1];
+        v[0] = new AtkValue { Type = AtkValueType.Int, Int = -1 };
+        addon->FireCallback(1, v);
+        return false;
+    }
+
+    /// <summary>
     /// Close the retainer's inventory window and return to the retainer's
     /// <c>SelectString</c>; true once neither layout (<c>InventoryRetainerLarge</c>,
     /// <c>InventoryRetainer</c>) is visible and the Retainer agent is inactive.

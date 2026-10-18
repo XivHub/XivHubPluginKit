@@ -41,7 +41,7 @@ from inside a `catch` block.
 | Services | Dalamud services for kit code | `KitServices.cs` | nothing |
 | Plugin presence | "is plugin X loaded", cheap enough to ask every frame | `PluginPresence.cs` | ECommons |
 | Dev log | streaming logs, state snapshots, JSON records and file dumps to a LAN server during development | `DevTelemetry.cs`, `devlog_server.py` | nothing |
-| Game | mount, dismount, sprint, jump, flight unlock, line of sight, a stuck screenshot flag | `Game/*.cs` | ECommons for `LineOfSight`, `MountHelper`, `SprintHelper`; `KitServices` for `FlightHelper`, `ScreenshotLatch` |
+| Game | mount, dismount, sprint, jump, flight unlock, line of sight, a stuck screenshot flag, Lifestream travel (world change, custom aliases, character change) | `Game/*.cs` | ECommons for `LineOfSight`, `MountHelper`, `SprintHelper`; `KitServices` for `FlightHelper`, `ScreenshotLatch`; `KitServices` and `PluginPresence` for `LifestreamBridge` |
 | Inventory | item sheet lookups, container scans, main-bag counts, NPC price floors, frame-spaced item moves | `Inventory/*.cs` | `KitServices`, except `SlotView` and `MoveOp` |
 | Crafting | creating and importing Artisan crafting lists over IPC | `Crafting/ArtisanBridge.cs` | ECommons, `KitServices`, `PluginPresence` |
 | Shop | buying from the NPC gil shop the player stands next to, then leaving the conversation | `Shop/*.cs` | ECommons, `KitServices`, `Inventory/` bag files |
@@ -230,10 +230,10 @@ match the English entry label exactly, so shop buying works on an English client
 
 | File | Holds |
 | --- | --- |
-| `RetainerWalk.cs` | the summoning-bell UI walk shared by every session that drives a retainer (`RetainerList` → row → "Sell Items" → `RetainerSellList`, or → "Entrust or withdraw items" (`ClickEntrustOrWithdraw`, matched by Addon sheet row) → the retainer inventory, and the teardown back out, including `CloseRetainerInventory`, which leaves the inventory window for the retainer menu), `DescribeSelectString` for failure messages, the roster read, and the sell-list row names |
+| `RetainerWalk.cs` | the summoning-bell UI walk shared by every session that drives a retainer (`RetainerList` → row → "Sell Items" → `RetainerSellList`, or → "Entrust or withdraw items" (`ClickEntrustOrWithdraw`, matched by Addon sheet row) → the retainer inventory, and the teardown back out, including `CloseRetainerInventory`, which leaves the inventory window for the retainer menu, and `CloseRetainerList`, which leaves the bell), `DescribeSelectString` for failure messages, the roster read, and the sell-list row names |
 | `RetainerRetrieve.cs` | the native retainer item command: whole-stack retrieve from an open retainer inventory, refused unless the slot still holds the item and quantity the caller scanned; the live page scan, the pages-loaded check, the inventory-ready check |
 | `RetainerMarket.cs` | `RetainerMarket.ReadLive`, a live memory read of the currently-open retainer's market listings |
-| `AutoRetainerSuppress.cs` | toggles AutoRetainer's suppression IPC around a session that drives a retainer by hand |
+| `AutoRetainerSuppress.cs` | toggles AutoRetainer's suppression IPC around a session that drives a retainer by hand; `Hold`/`Release` keep it suppressed across several sessions |
 
 Every `RetainerWalk` step, every `RetainerRetrieve` call and `RetainerMarket.ReadLive` must run on the
 framework thread. `RetainerWalk` and `AutoRetainerSuppress` need ECommons (`Svc`); `AutoRetainerSuppress`
