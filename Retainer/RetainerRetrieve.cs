@@ -12,9 +12,9 @@ using XivHubPluginKit.Inventory;
 namespace XivHubPluginKit.Retainer;
 
 /// <summary>
-/// Moves items out of a summoned retainer's inventory with the game's native retainer item
-/// command, the function AutoRetainer calls <c>RetainerItemCommand</c>. It is the only way items
-/// leave a retainer here: <c>InventoryManager.MoveItemSlot</c> is never called on a
+/// Moves items out of a summoned retainer's inventory, and has the retainer sell bag stacks to an
+/// NPC (<see cref="SellFromBags"/>), with the game's native retainer item command, the function
+/// AutoRetainer calls <c>RetainerItemCommand</c>. It is the only way items leave a retainer here: <c>InventoryManager.MoveItemSlot</c> is never called on a
 /// <c>RetainerPage*</c> container, because those containers accept only the native command.
 ///
 /// Invariants every caller relies on:
@@ -189,6 +189,23 @@ public static unsafe class RetainerRetrieve
     /// return is never a move. A true return means the command was sent; the stack lands after a
     /// server round trip.
     /// </summary>
+    public static bool Retrieve(uint slot, InventoryType page, uint expectItemId, uint expectQty)
+        => Send(slot, page, expectItemId, expectQty, Pages, "not a retainer page",
+                RetainerItemCommand.RetrieveFromRetainer, "Retrieve");
+
+    /// <summary>
+    /// Sends <c>HaveRetainerSellItem</c> for one slot of the player's main bags
+    /// (<see cref="MainBags.Types"/>): the retainer sells that slot's whole stack to an NPC for
+    /// the item's <c>PriceLow</c>, the "Have Retainer Sell Items" entry of the item's context menu
+    /// (Addon row 5480), which AutoRetainer's QuickSellItems and its auto vendor fire the same
+    /// way. The same checks as <see cref="Retrieve"/> run on this frame first, with the slot read
+    /// from the bag container instead of a retainer page; a true return means the command was
+    /// sent, and the slot empties after a server round trip.
+    /// </summary>
+    public static bool SellFromBags(uint slot, InventoryType bag, uint expectItemId, uint expectQty)
+        => Send(slot, bag, expectItemId, expectQty, MainBags.Types, "not one of the main bags",
+                RetainerItemCommand.HaveRetainerSellItem, "Sell");
+
     // SAFETY: Binding.Invoke is non-null only when the signature bound to a function in the game's
     // .text. AgentModule.Instance(), GetAgentByInternalId, InventoryManager.Instance() and
     // GetInventoryContainer return the game's own long-lived objects, each null-checked; the item
@@ -199,14 +216,16 @@ public static unsafe class RetainerRetrieve
     // The game only reads through it while the agent is active, which is checked on this frame,
     // and every check above runs on the framework thread, so nothing changes between the checks
     // and the call.
-    public static bool Retrieve(uint slot, InventoryType page, uint expectItemId, uint expectQty)
+    private static bool Send(uint slot, InventoryType page, uint expectItemId, uint expectQty,
+                             IReadOnlyList<InventoryType> allowed, string notAllowed,
+                             RetainerItemCommand command, string verb)
     {
         var framework = Svc.Framework;
         if (framework == null || !framework.IsInFrameworkUpdateThread)
         {
             KitServices.Log?.Error(framework == null
-                ? $"{KitServices.LogPrefix} Retrieve refused: Svc.Framework is null because ECommonsMain.Init has not run."
-                : $"{KitServices.LogPrefix} Retrieve refused: called off the framework thread.");
+                ? $"{KitServices.LogPrefix} {verb} refused: Svc.Framework is null because ECommonsMain.Init has not run."
+                : $"{KitServices.LogPrefix} {verb} refused: called off the framework thread.");
             return false;
         }
 
@@ -216,36 +235,36 @@ public static unsafe class RetainerRetrieve
 
         var agentModule = AgentModule.Instance();
         if (agentModule == null)
-            return Refuse(slot, page, "the agent module is not available");
+            return Refuse(verb, slot, page, "the agent module is not available");
 
         var agent = agentModule->GetAgentByInternalId(AgentId.Retainer);
         if (agent == null || !agent->IsAgentActive())
-            return Refuse(slot, page, "the Retainer agent is not active");
+            return Refuse(verb, slot, page, "the Retainer agent is not active");
 
         if (!IsInventoryReady())
-            return Refuse(slot, page, "the retainer inventory window is not ready");
+            return Refuse(verb, slot, page, "the retainer inventory window is not ready");
 
-        if (!Pages.Contains(page))
-            return Refuse(slot, page, "not a retainer page");
+        if (!allowed.Contains(page))
+            return Refuse(verb, slot, page, notAllowed);
 
         var mgr = InventoryManager.Instance();
         if (mgr == null)
-            return Refuse(slot, page, "the inventory manager is not available");
+            return Refuse(verb, slot, page, "the inventory manager is not available");
 
         var container = mgr->GetInventoryContainer(page);
         if (container == null || !container->IsLoaded)
-            return Refuse(slot, page, "the page's container is not loaded");
+            return Refuse(verb, slot, page, "the container is not loaded");
 
         if (container->Size <= 0 || slot >= (uint)container->Size)
-            return Refuse(slot, page, $"the slot is outside the page's {container->Size} slots");
+            return Refuse(verb, slot, page, $"the slot is outside the container's {container->Size} slots");
 
         var item = container->Items + slot;
         if (expectItemId == 0 || item->ItemId != expectItemId || (uint)item->Quantity != expectQty)
-            return Refuse(slot, page, $"the slot holds item {item->ItemId} x{item->Quantity}, expected {expectItemId} x{expectQty}");
+            return Refuse(verb, slot, page, $"the slot holds item {item->ItemId} x{item->Quantity}, expected {expectItemId} x{expectQty}");
 
         try
         {
-            invoke((nint)agent + 40, slot, page, 0, RetainerItemCommand.RetrieveFromRetainer);
+            invoke((nint)agent + 40, slot, page, 0, command);
             return true;
         }
         catch (Exception ex)
@@ -253,14 +272,14 @@ public static unsafe class RetainerRetrieve
             // Only a managed exception reaches here, such as one thrown by another plugin's detour
             // on this function; a native access violation inside the game is not catchable and
             // takes the process down. Escaping into the framework tick would recur every frame.
-            KitServices.Log?.Error(ex, $"{KitServices.LogPrefix} RetainerItemCommand invoke threw; treating the retrieve as failed.");
+            KitServices.Log?.Error(ex, $"{KitServices.LogPrefix} RetainerItemCommand invoke threw; treating the {verb.ToLowerInvariant()} as failed.");
             return false;
         }
     }
 
-    private static bool Refuse(uint slot, InventoryType page, string why)
+    private static bool Refuse(string verb, uint slot, InventoryType page, string why)
     {
-        KitServices.Log?.Warning($"{KitServices.LogPrefix} Retrieve refused for {page}:{slot}: {why}.");
+        KitServices.Log?.Warning($"{KitServices.LogPrefix} {verb} refused for {page}:{slot}: {why}.");
         return false;
     }
 }
