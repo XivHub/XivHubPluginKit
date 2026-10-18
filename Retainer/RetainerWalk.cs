@@ -292,6 +292,45 @@ public static class RetainerWalk
     }
 
     /// <summary>
+    /// The confirmation Quit raises on a retainer that has sold items to an NPC
+    /// ("Have Retainer Sell Items"): "Your retainer will be unable to process
+    /// item buyback requests once recalled. Are you sure you wish to proceed?",
+    /// row 215 of the retainer bell dialogue, the text AutoRetainer matches in
+    /// <c>RetainerHandlers.ConfirmCantBuyback</c>. Cancelling it puts the
+    /// retainer's menu back, so leaving the retainer means answering Yes.
+    /// </summary>
+    private static string? buybackConfirmText;
+
+    private static string BuybackConfirmText => buybackConfirmText ??= Strip(
+        Svc.Data.GetExcelSheet<ECommons.ExcelServices.Sheets.QuestDialogueText>(name: "custom/000/CmnDefRetainerCall_00010")
+            ?.GetRowOrDefault(215)?.Value.GetText() ?? "");
+
+    private static string Strip(string s) => new(s.Where(c => !char.IsWhiteSpace(c)).ToArray());
+
+    /// <summary>Whether <paramref name="selectYesno"/> is the buyback
+    /// confirmation. Framework thread.</summary>
+    public static unsafe bool IsBuybackConfirm(AtkUnitBase* selectYesno)
+    {
+        string want = BuybackConfirmText;
+        return want.Length > 0 && Strip(new AddonMaster.SelectYesno(selectYesno).Text).Contains(want, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// After <see cref="CloseSelectStringBack"/>: answer Yes to the buyback
+    /// confirmation if Quit raised one, and finish once the retainer list is
+    /// back. A retainer that sold nothing raises none, and this simply waits
+    /// for the list.
+    /// </summary>
+    public static unsafe bool? ConfirmQuitWithBuyback(Func<bool> throttle)
+    {
+        if (IsRetainerListReady()) return true;
+        if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("SelectYesno", out var yesno)
+            && GenericHelpers.IsAddonReady(yesno) && IsBuybackConfirm(yesno) && throttle())
+            new AddonMaster.SelectYesno(yesno).Yes();
+        return false;
+    }
+
+    /// <summary>
     /// Click the localised "Quit" entry on the retainer <c>SelectString</c>,
     /// looked up via Addon sheet row 2383 so it works in every client locale.
     /// Closing the widget with <c>Close(true)</c> would hide it without the game
