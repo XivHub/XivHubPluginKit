@@ -706,12 +706,13 @@ public sealed class PinchEngine : IDisposable
             foreach (int rowIndex in visit)
             {
                 int captured = rowIndex;
-                _tasks.Enqueue(BeginRow);
+                var steps = new List<Func<bool?>> { BeginRow };
                 if (captured < visual.Count)
-                    _tasks.Enqueue(() => SkipIfSettled(visual[captured], plan));
-                _tasks.Enqueue(() => OpenItemContextMenu(captured));
-                _tasks.Enqueue(ClickAdjustPrice);
-                _tasks.Enqueue(() => ApplyRepriceFromWindow(plan));
+                    steps.Add(() => SkipIfSettled(visual[captured], plan));
+                steps.Add(() => OpenItemContextMenu(captured));
+                steps.Add(ClickAdjustPrice);
+                steps.Add(() => ApplyRepriceFromWindow(plan));
+                EnqueueRow(steps);
             }
         }
 
@@ -755,6 +756,26 @@ public sealed class PinchEngine : IDisposable
     private const int RetainerListReturnMs = 10000;
 
     // --- Per-row UI helpers (mirrored from Dagobert/AutoPinch.cs) ---
+
+    // One task per row, running its steps in order within a frame until one
+    // waits. The task runner advances at most one task per frame, and a
+    // backgrounded client draws about 8 frames a second, so as separate tasks a
+    // row SkipIfSettled leaves shut would spend a frame on each step it passes
+    // through. The limit is the per-step limit the steps had as tasks, summed.
+    private void EnqueueRow(List<Func<bool?>> steps)
+    {
+        int next = 0;
+        _tasks.Enqueue(() =>
+        {
+            while (next < steps.Count)
+            {
+                bool? done = steps[next]();
+                if (done != true) return done;
+                next++;
+            }
+            return true;
+        }, steps.Count * _tasks.TimeLimitMS, true);
+    }
 
     // Starts a row: clears the previous row's verdict and stamps its deadline.
     private bool? BeginRow()
