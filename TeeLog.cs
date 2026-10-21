@@ -8,10 +8,7 @@ namespace XivHubPluginKit;
 /// An <see cref="IPluginLog"/> that forwards to the real one and also mirrors
 /// each line to <see cref="DevTelemetry"/>.
 ///
-/// Formatting is deliberate: Dalamud's sinks take Serilog message templates
-/// (<c>{Name}</c> placeholders), which are not <see cref="string.Format"/>
-/// patterns, so the mirror renders them itself rather than passing them to
-/// <c>string.Format</c> and throwing on the first template it meets.
+/// The mirror renders each template with <see cref="LogTemplate.Render"/>.
 /// </summary>
 public sealed class TeeLog(IPluginLog inner, DevTelemetry telemetry) : IPluginLog
 {
@@ -23,43 +20,13 @@ public sealed class TeeLog(IPluginLog inner, DevTelemetry telemetry) : IPluginLo
 
     public Serilog.ILogger Logger => inner.Logger;
 
-    /// <summary>
-    /// Render a Serilog template against its arguments. Named holes are filled
-    /// positionally, which is what Serilog does for a non-structured sink, and
-    /// anything malformed falls back to the raw template plus its arguments so
-    /// a logging bug can never lose the line.
-    /// </summary>
-    private static string Render(string template, object[] values)
-    {
-        if (values.Length == 0) return template;
-        try
-        {
-            var sb = new System.Text.StringBuilder(template.Length + 32);
-            int arg = 0;
-            for (int i = 0; i < template.Length; i++)
-            {
-                if (template[i] != '{') { sb.Append(template[i]); continue; }
-                int close = template.IndexOf('}', i);
-                if (close < 0) { sb.Append(template[i]); continue; }
-                sb.Append(arg < values.Length ? values[arg]?.ToString() ?? "null" : "?");
-                arg++;
-                i = close;
-            }
-            return sb.ToString();
-        }
-        catch
-        {
-            return template + " " + string.Join(" ", values);
-        }
-    }
-
     private void Mirror(string level, string template, object[] values)
-        => telemetry.Log($"{level} {Render(template, values)}");
+        => telemetry.Log($"{level} {LogTemplate.Render(template, values)}");
 
     private void Mirror(string level, Exception? ex, string template, object[] values)
         => telemetry.Log(ex is null
-            ? $"{level} {Render(template, values)}"
-            : $"{level} {Render(template, values)} :: {ex.GetType().Name}: {ex.Message}");
+            ? $"{level} {LogTemplate.Render(template, values)}"
+            : $"{level} {LogTemplate.Render(template, values)} :: {ex.GetType().Name}: {ex.Message}");
 
     public void Fatal(string m, params object[] v) { inner.Fatal(m, v); Mirror("FTL", m, v); }
     public void Fatal(Exception? e, string m, params object[] v) { inner.Fatal(e, m, v); Mirror("FTL", e, m, v); }

@@ -79,10 +79,15 @@ public static class RetainerWalk
         => GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerList", out var addon)
            && GenericHelpers.IsAddonReady(addon);
 
+    /// <summary>Counts read off sell lists as they close; see
+    /// <see cref="Retainer.MarketCounts"/>.</summary>
+    private static readonly MarketCounts SeenMarketCounts = new();
+
     /// <summary>
     /// The retainer roster by sorted index. <c>MarketItemCount</c> is readable
-    /// without opening the retainer, so free market slots cost no UI round-trip.
-    /// Framework thread.
+    /// without opening the retainer, so free market slots cost no UI round-trip;
+    /// a count read off that retainer's sell list stands in for it while the
+    /// game's lags (<see cref="Retainer.MarketCounts"/>). Framework thread.
     /// </summary>
     public static unsafe List<RosterEntry> ReadRoster()
     {
@@ -95,7 +100,8 @@ public static class RetainerWalk
         {
             var entry = mgr->GetRetainerBySortedIndex((uint)i);
             if (entry == null) continue;
-            list.Add(new RosterEntry(entry->RetainerId, entry->NameString, i, entry->MarketItemCount));
+            int market = SeenMarketCounts.Resolve(entry->RetainerId, entry->MarketItemCount);
+            list.Add(new RosterEntry(entry->RetainerId, entry->NameString, i, market));
         }
         return list;
     }
@@ -218,7 +224,38 @@ public static class RetainerWalk
 
     public static bool? CloseRetainerSell(Func<bool> throttle) => CloseAddon("RetainerSell", throttle);
     public static bool? CloseContextMenu(Func<bool> throttle) => CloseAddon("ContextMenu", throttle);
-    public static bool? CloseRetainerSellList(Func<bool> throttle) => CloseAddon("RetainerSellList", throttle);
+    public static bool? CloseRetainerSellList(Func<bool> throttle)
+    {
+        RememberOpenSellListCount();
+        return CloseAddon("RetainerSellList", throttle);
+    }
+
+    /// <summary>
+    /// Record the open sell list's live listing count for
+    /// <see cref="ReadRoster"/>. Every session leaves a sell list through
+    /// <see cref="CloseRetainerSellList"/>, so this sees the count after
+    /// whatever the session pulled or listed. The <c>RetainerMarket</c>
+    /// container is only loaded while the list is open; with none open this
+    /// records nothing. Framework thread.
+    /// </summary>
+    private static unsafe void RememberOpenSellListCount()
+    {
+        if (SellListRowCount() < 0) return;
+        var mgr = RetainerManager.Instance();
+        var im = InventoryManager.Instance();
+        if (mgr == null || im == null) return;
+        var active = mgr->GetActiveRetainer();
+        var container = im->GetInventoryContainer(InventoryType.RetainerMarket);
+        if (active == null || active->RetainerId == 0 || container == null || !container->IsLoaded) return;
+        int live = 0;
+        for (int i = 0; i < container->Size; i++)
+        {
+            var slot = container->GetInventorySlot(i);
+            if (slot != null && slot->ItemId != 0) live++;
+        }
+        SeenMarketCounts.Remember(active->RetainerId, live, active->MarketItemCount);
+    }
+
     public static bool? CloseItemSearchResult(Func<bool> throttle) => CloseAddon("ItemSearchResult", throttle);
 
     /// <summary>

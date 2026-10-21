@@ -102,7 +102,8 @@ plugin unload by no more than that.
 ### TeeLog
 
 `TeeLog` wraps a plugin's `IPluginLog` and mirrors every line (and rendered Serilog template) to
-`DevTelemetry`, with no call-site changes. Hand a kit class that takes an `IPluginLog` this tee, not
+`DevTelemetry`, with no call-site changes. It needs `LogTemplate.cs` linked beside it, which renders
+the templates (formats included, invariant culture). Hand a kit class that takes an `IPluginLog` this tee, not
 the plugin's own `IPluginLog`, if its log lines are meant to reach the dev-log server; kit code that
 logs through `KitServices.Log` instead of an injected `IPluginLog` bypasses the tee, because
 `KitServices.Init` is wired to the plain log.
@@ -230,7 +231,7 @@ match the English entry label exactly, so shop buying works on an English client
 
 | File | Holds |
 | --- | --- |
-| `RetainerWalk.cs` | the summoning-bell UI walk shared by every session that drives a retainer (`RetainerList` → row → "Sell Items" → `RetainerSellList`, or → "Entrust or withdraw items" (`ClickEntrustOrWithdraw`, matched by Addon sheet row) → the retainer inventory, and the teardown back out, including `CloseRetainerInventory`, which leaves the inventory window for the retainer menu, `CloseRetainerList`, which leaves the bell, and `ConfirmQuitWithBuyback`, which answers the buyback confirmation Quit raises after a sale), `DescribeSelectString` for failure messages, the roster read, and the sell-list row names |
+| `RetainerWalk.cs` | the summoning-bell UI walk shared by every session that drives a retainer (`RetainerList` → row → "Sell Items" → `RetainerSellList`, or → "Entrust or withdraw items" (`ClickEntrustOrWithdraw`, matched by Addon sheet row) → the retainer inventory, and the teardown back out, including `CloseRetainerInventory`, which leaves the inventory window for the retainer menu, `CloseRetainerList`, which leaves the bell, and `ConfirmQuitWithBuyback`, which answers the buyback confirmation Quit raises after a sale), `DescribeSelectString` for failure messages, the roster read, and the sell-list row names. Needs `MarketCounts.cs` linked beside it: the roster read lays the counts seen on sell lists over the game's lagging `MarketItemCount` |
 | `RetainerRetrieve.cs` | the native retainer item command: whole-stack retrieve from an open retainer inventory and whole-stack sale of a bag slot to an NPC through the retainer (`SellFromBags`), each refused unless the slot still holds the item and quantity the caller scanned; the live page scan, the pages-loaded check, the inventory-ready check |
 | `RetainerMarket.cs` | `RetainerMarket.ReadLive`, a live memory read of the currently-open retainer's market listings |
 | `AutoRetainerSuppress.cs` | toggles AutoRetainer's suppression IPC around a session that drives a retainer by hand; `Hold`/`Release` keep it suppressed across several sessions |
@@ -244,6 +245,7 @@ so link all three too.
 
 ```xml
 <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerWalk.cs" Link="Kit\Retainer\RetainerWalk.cs" />
+<Compile Include="..\..\XivHubPluginKit\Retainer\MarketCounts.cs" Link="Kit\Retainer\MarketCounts.cs" />
 <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarket.cs" Link="Kit\Retainer\RetainerMarket.cs" />
 <Compile Include="..\..\XivHubPluginKit\Retainer\AutoRetainerSuppress.cs" Link="Kit\Retainer\AutoRetainerSuppress.cs" />
 <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerRetrieve.cs" Link="Kit\Retainer\RetainerRetrieve.cs" />
@@ -342,6 +344,7 @@ the price a live Compare Prices lookup decides.
 <Compile Include="..\..\XivHubPluginKit\Inventory\VendorPrice.cs" Link="Kit\Inventory\VendorPrice.cs" />
 <Compile Include="..\..\XivHubPluginKit\Shop\TalkSkipper.cs" Link="Kit\Shop\TalkSkipper.cs" />
 <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerWalk.cs" Link="Kit\Retainer\RetainerWalk.cs" />
+<Compile Include="..\..\XivHubPluginKit\Retainer\MarketCounts.cs" Link="Kit\Retainer\MarketCounts.cs" />
 <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarket.cs" Link="Kit\Retainer\RetainerMarket.cs" />
 <Compile Include="..\..\XivHubPluginKit\Retainer\AutoRetainerSuppress.cs" Link="Kit\Retainer\AutoRetainerSuppress.cs" />
 <Compile Include="..\..\XivHubPluginKit\Board\BoardObservation.cs" Link="Kit\Board\BoardObservation.cs" />
