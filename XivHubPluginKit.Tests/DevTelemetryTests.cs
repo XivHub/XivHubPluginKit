@@ -323,6 +323,23 @@ public sealed class DevTelemetryTests
     }
 
     [Fact]
+    public void LinesCarryTheCharacterOnceSet()
+    {
+        using var server = new FakeDevlog();
+        var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
+        t.Log("before");
+        t.Character = "Zhyra Nyoh@Ragnarok";
+        t.Log("after");
+        Assert.True(SpinWait.SpinUntil(
+            () => server.Posts("/log").Any(p => p.Text.Contains("after")), Wait));
+        t.Dispose();
+
+        var lines = server.Posts("/log").SelectMany(p => p.Text.Split('\n')[..^1]).ToList();
+        Assert.Contains(lines, l => l.EndsWith("[Test] before"));
+        Assert.Contains(lines, l => l.EndsWith("[Test] {Zhyra Nyoh@Ragnarok} after"));
+    }
+
+    [Fact]
     public void MultiLineLogKeepsTheOffsetInStepWithTheServer()
     {
         using var server = new FakeDevlog();
@@ -342,8 +359,10 @@ public sealed class DevTelemetryTests
                 long.Parse(posts[i].Offset!, CultureInfo.InvariantCulture));
 
         var lines = posts.SelectMany(p => p.Text.Split('\n')[..^1]).ToList();
-        Assert.All(lines, l => Assert.Matches(@"^[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} \[Test\] ", l));
-        Assert.Equal(["telemetry session started", "one", "two", "three", "four"], lines.Select(l => l[(l.IndexOf("] ", StringComparison.Ordinal) + 2)..]));
+        Assert.All(lines, l => Assert.Matches(@"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} \[Test\] ", l));
+        var bodies = lines.Select(l => l[(l.IndexOf("] ", StringComparison.Ordinal) + 2)..]).ToList();
+        Assert.StartsWith("telemetry session started, ", bodies[0]);
+        Assert.Equal(["one", "two", "three", "four"], bodies[1..]);
     }
 
     [Fact]

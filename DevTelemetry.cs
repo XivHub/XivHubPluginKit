@@ -126,7 +126,22 @@ public sealed class DevTelemetry : IDisposable
         this.url = url;
         this.onError = onError;
         timer = new Timer(_ => FlushOnTimer(), null, 1000, 1000);
-        Log("telemetry session started");
+        // This file is compiled into each plugin, so its assembly is the plugin's own: the
+        // version says which build wrote the lines that follow.
+        var plugin = typeof(DevTelemetry).Assembly.GetName();
+        Log($"telemetry session started, {plugin.Name} {plugin.Version}");
+    }
+
+    private volatile string? character;
+
+    /// <summary>The character every later line is tagged with, as <c>{Name@World}</c> after the
+    /// source; null leaves lines untagged. Set it on login and character change: a plugin that
+    /// drives several characters in one session otherwise leaves the reader to work out who a
+    /// line belongs to.</summary>
+    public string? Character
+    {
+        get => character;
+        set => character = value;
     }
 
     /// <summary>Whether telemetry is currently active (toggle on and an endpoint set). Never throws:
@@ -162,7 +177,9 @@ public sealed class DevTelemetry : IDisposable
     public void Log(string line)
     {
         if (disposing.IsCancellationRequested || !Active) return;
-        var prefix = $"{DateTime.Now:HH:mm:ss.fff} [{source}] ";
+        // Dated: the log spans days, and a time alone cannot tell two of them apart.
+        var who = character is { Length: > 0 } c ? $"{{{c}}} " : "";
+        var prefix = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{source}] {who}";
         // The server splits a /log body on '\n' alone and gives each line one stream position; one
         // queue entry per part keeps the offset this client sends equal to the server's count.
         foreach (var part in (line ?? "").Split('\n'))
