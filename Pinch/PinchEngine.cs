@@ -159,6 +159,11 @@ public sealed class PinchEngine : IDisposable
     // "Adjust Price" (a mannequin listing), or the window never opened, so the
     // later steps advance instead of waiting on a window that isn't coming.
     private bool _rowUnavailable;
+
+    // Rows SkipIfSettled left shut on the current retainer, logged as one line
+    // on the way out rather than one per row.
+    private readonly List<string> _settled = new();
+
     // One sample of a sell-list row's context menu per session, for naming
     // its entries in the log.
     private bool _loggedSellRowMenu;
@@ -666,6 +671,7 @@ public sealed class PinchEngine : IDisposable
         // duplicate stack already at its live-decided price can't consume
         // budget meant for another stack.
         _rowsRemaining = plan.LiveRows;
+        _settled.Clear();
 
         // Visit every row the plan claims once; ApplyRepriceFromWindow reads the
         // item the window actually opened and runs a live market-board compare,
@@ -731,7 +737,11 @@ public sealed class PinchEngine : IDisposable
     private bool? CloseItemSearchResult() => RetainerWalk.CloseItemSearchResult(() => GenericThrottle);
     private bool? CloseRetainerSell() => RetainerWalk.CloseRetainerSell(() => GenericThrottle);
     private bool? CloseContextMenu() => RetainerWalk.CloseContextMenu(() => GenericThrottle);
-    private bool? CloseRetainerSellList() => RetainerWalk.CloseRetainerSellList(() => GenericThrottle);
+    private bool? CloseRetainerSellList()
+    {
+        LogSettled();
+        return RetainerWalk.CloseRetainerSellList(() => GenericThrottle);
+    }
 
     private bool? CloseSelectStringBack()
         => RetainerWalk.CloseSelectStringBack(() => GenericThrottle, RethrottleGeneric);
@@ -750,6 +760,15 @@ public sealed class PinchEngine : IDisposable
         _tasks.Enqueue(CloseRetainerSellList);
         _tasks.Enqueue(CloseSelectStringBack);
         _tasks.Enqueue(() => WaitForAddon("RetainerList"), RetainerListReturnMs, false);
+    }
+
+    private void LogSettled()
+    {
+        if (_settled.Count > 0)
+            _log.Information("Pinch: {Count} row(s) already settled by this run's board read, not opened: {Items}",
+                _settled.Count,
+                string.Join(", ", _settled.GroupBy(n => n).Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key)));
+        _settled.Clear();
     }
 
     /// <summary>How long the game may take to put <c>RetainerList</c> back after Quit.</summary>
@@ -801,8 +820,7 @@ public sealed class PinchEngine : IDisposable
             return true;
         if (PinchDecision.Decide(cached, row.Price, _profitFloor(itemId), _settings().SkipIfNoCompetitor).Held)
             RecordLiveHold(itemId, row.Hq, row.Price, cached.Competitor);
-        _log.Information("Pinch: {Item} (hq={Hq}) at {Price:N0} already settled by this run's board read; not opened",
-            row.Name, row.Hq, row.Price);
+        _settled.Add(row.Hq ? row.Name + " (HQ)" : row.Name);
         _rowUnavailable = true;
         return true;
     }
