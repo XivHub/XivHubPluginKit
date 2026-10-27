@@ -164,6 +164,20 @@ public sealed class PinchEngine : IDisposable
     // on the way out rather than one per row.
     private readonly List<string> _settled = new();
 
+    // Sell-list rows whose context menu offered no "Adjust Price": a mannequin
+    // listing (Merchant Setting), which the list cannot reprice. Keyed by
+    // retainer and the row as the list draws it, so a later pass this session
+    // leaves the row shut, and a row whose price changed is checked again.
+    private readonly HashSet<(ulong Retainer, RetainerWalk.SellListRow Row)> _noAdjust = new();
+    private ulong _rowRetainer;
+    private RetainerWalk.SellListRow? _rowVisual;
+    private int _rowSlot;
+
+    // One raw sell-list row of a mannequin listing per session: the list's
+    // AtkValues are the only place a marker could let Pinch skip such a row
+    // before opening its menu, and that layout is not mapped yet.
+    private bool _loggedMannequinRow;
+
     // One sample of a sell-list row's context menu per session, for naming
     // its entries in the log.
     private bool _loggedSellRowMenu;
@@ -301,7 +315,7 @@ public sealed class PinchEngine : IDisposable
         DryRunVisit? dry;
         try
         {
-            EnqueuePinchTasks(p, rows, visual, closeOuterList: true, dryRun, out dry);
+            EnqueuePinchTasks(retainer.Cid, p, rows, visual, closeOuterList: true, dryRun, out dry);
         }
         catch (Exception ex)
         {
@@ -388,7 +402,7 @@ public sealed class PinchEngine : IDisposable
         }
 
         var visual = await ReadVisualRows();
-        EnqueuePinchTasks(p, rows, visual, closeOuterList: true, dryRun: false, out _);
+        EnqueuePinchTasks(retainer.Cid, p, rows, visual, closeOuterList: true, dryRun: false, out _);
         await DrainTasks();
         return Result(retainer, rows.Count, p, null);
     }
@@ -513,7 +527,7 @@ public sealed class PinchEngine : IDisposable
 
                 // Phase 3: reprice changed items, then close back to RetainerList.
                 var visual = await ReadVisualRows();
-                EnqueuePinchTasks(p, rows, visual, closeOuterList: false, dryRun: false, out _);
+                EnqueuePinchTasks(retainer.Cid, p, rows, visual, closeOuterList: false, dryRun: false, out _);
                 EnqueueLeaveRetainer();
                 await DrainTasks();
                 var result = Result(retainer, rows.Count, p, null);
@@ -652,6 +666,7 @@ public sealed class PinchEngine : IDisposable
     }
 
     private void EnqueuePinchTasks(
+        ulong retainerCid,
         RetainerPlan plan,
         IReadOnlyList<RetainerMarketRow> rows,
         IReadOnlyList<RetainerWalk.SellListRow> visual,
@@ -696,8 +711,10 @@ public sealed class PinchEngine : IDisposable
             }
             var visit = PinchPlanning.RowsToVisit(
                 visual.Select(v => (v.Name, v.Hq)).ToList(), rows.Count, plan.Live);
+            int mannequins = visit.RemoveAll(i => i < visual.Count && _noAdjust.Contains((retainerCid, visual[i])));
             if (visual.Count > 0)
-                _log.Information("Pinch: {Visit} of {Rows} row(s) need opening", visit.Count, visual.Count);
+                _log.Information("Pinch: {Visit} of {Rows} row(s) need opening{Mannequins}", visit.Count, visual.Count,
+                    mannequins > 0 ? $"; {mannequins} mannequin row(s) left shut" : string.Empty);
 
             if (dryRun)
             {
@@ -709,10 +726,20 @@ public sealed class PinchEngine : IDisposable
                 return;
             }
 
+            _rowRetainer = retainerCid;
             foreach (int rowIndex in visit)
             {
                 int captured = rowIndex;
-                var steps = new List<Func<bool?>> { BeginRow };
+                var steps = new List<Func<bool?>>
+                {
+                    BeginRow,
+                    () =>
+                    {
+                        _rowSlot = captured;
+                        _rowVisual = captured < visual.Count ? visual[captured] : null;
+                        return true;
+                    },
+                };
                 if (captured < visual.Count)
                     steps.Add(() => SkipIfSettled(visual[captured], plan));
                 steps.Add(() => OpenItemContextMenu(captured));
@@ -830,6 +857,11 @@ public sealed class PinchEngine : IDisposable
     private bool? SkipRow(string reason)
     {
         _log.Warning("Pinch: {Reason}; skipping row", reason);
+        return GiveUpRow();
+    }
+
+    private bool? GiveUpRow()
+    {
         _rowUnavailable = true;
         if (_rowsRemaining != int.MaxValue && _rowsRemaining > 0) _rowsRemaining--;
         return true;
@@ -908,7 +940,22 @@ public sealed class PinchEngine : IDisposable
         if (!hasAdjust)
         {
             if (!GenericThrottle) return false;
+            if (!_loggedMannequinRow)
+            {
+                _loggedMannequinRow = true;
+                // The last row for contrast: furnishings sort after gear, so it
+                // is an ordinary listing whenever the list holds one.
+                int last = RetainerWalk.SellListRowCount() - 1;
+                _log.Information("Pinch: mannequin sell-list row {Slot}: {Values} | last row {Last}: {LastValues}",
+                    _rowSlot, RetainerWalk.DescribeSellListRow(_rowSlot), last, RetainerWalk.DescribeSellListRow(last));
+            }
             addon->Close(true);
+            if (_rowVisual is { } row)
+            {
+                _noAdjust.Add((_rowRetainer, row));
+                _log.Information("Pinch: {Item} is a mannequin listing; left shut for the rest of the session", row.Name);
+                return GiveUpRow();
+            }
             return SkipRow("context menu has no 'Adjust Price' entry (mannequin)");
         }
         // Log this menu's entries once per session: entry wording varies with

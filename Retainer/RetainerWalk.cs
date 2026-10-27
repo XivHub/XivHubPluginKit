@@ -498,6 +498,33 @@ public static class RetainerWalk
         return rows;
     }
 
+    /// <summary>Every AtkValue of one sell-list row as <c>[index] type value</c>,
+    /// for the log: a row's layout beyond name, quantity and price is not
+    /// mapped. Empty when the list is not open. Framework thread.</summary>
+    public static unsafe string DescribeSellListRow(int row)
+    {
+        if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerSellList", out var addon)
+            || !GenericHelpers.IsAddonReady(addon) || addon->AtkValues == null)
+            return string.Empty;
+        int first = SellListFirstRow + row * SellListRowStride;
+        var parts = new List<string>();
+        for (int i = first; i < first + SellListRowStride && i < addon->AtkValuesCount; i++)
+        {
+            var v = addon->AtkValues[i];
+            string text = v.Type switch
+            {
+                AtkValueType.Int => v.Int.ToString(),
+                AtkValueType.UInt => v.UInt.ToString(),
+                AtkValueType.Bool => v.Byte.ToString(),
+                AtkValueType.String or AtkValueType.ConstString or AtkValueType.ManagedString
+                    => $"\"{ReadAtkString(v)}\"",
+                _ => string.Empty,
+            };
+            parts.Add($"[{i}] {v.Type} {text}");
+        }
+        return string.Join(", ", parts);
+    }
+
     // The price arrives formatted for the client's locale ("79,897",
     // "79.897"), so the digits alone are the number.
     private static uint ParseListPrice(string text)
