@@ -29,7 +29,8 @@ namespace XivHubPluginKit.Retainer;
 public static class RetainerWalk
 {
     /// <summary>One retainer as the roster knows it, without opening anything.</summary>
-    public readonly record struct RosterEntry(ulong Cid, string Name, int SortedIndex, int MarketCount);
+    public readonly record struct RosterEntry(ulong Cid, string Name, int SortedIndex, int MarketCount,
+        double? MarketReadAt = null);
 
     /// <summary>
     /// What the game calls a summoning bell, localised. Row 2000401 of
@@ -100,8 +101,8 @@ public static class RetainerWalk
         {
             var entry = mgr->GetRetainerBySortedIndex((uint)i);
             if (entry == null) continue;
-            int market = SeenMarketCounts.Resolve(entry->RetainerId, entry->MarketItemCount);
-            list.Add(new RosterEntry(entry->RetainerId, entry->NameString, i, market));
+            var market = SeenMarketCounts.Resolve(entry->RetainerId, entry->MarketItemCount);
+            list.Add(new RosterEntry(entry->RetainerId, entry->NameString, i, market.Listings, market.ReadAt));
         }
         return list;
     }
@@ -253,7 +254,8 @@ public static class RetainerWalk
             var slot = container->GetInventorySlot(i);
             if (slot != null && slot->ItemId != 0) live++;
         }
-        SeenMarketCounts.Remember(active->RetainerId, live, active->MarketItemCount);
+        SeenMarketCounts.Remember(active->RetainerId, live, active->MarketItemCount,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0);
     }
 
     public static bool? CloseItemSearchResult(Func<bool> throttle) => CloseAddon("ItemSearchResult", throttle);

@@ -456,7 +456,7 @@ public sealed class PinchEngine : IDisposable
 
             _sessionOwnCids = snapshot.Select(s => s.Cid).ToHashSet();
 
-            foreach (var (cid, name, sortedIdx, marketCount) in snapshot)
+            foreach (var (cid, name, sortedIdx, marketCount, _) in snapshot)
             {
                 if (token.IsCancellationRequested) break;
 

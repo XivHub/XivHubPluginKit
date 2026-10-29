@@ -18,23 +18,27 @@ namespace XivHubPluginKit.Retainer;
 /// </summary>
 public sealed class MarketCounts
 {
-    private readonly Dictionary<ulong, (int Live, int GameAt)> _seen = new();
+    private readonly Dictionary<ulong, (int Live, int GameAt, double ReadAt)> _seen = new();
+
+    /// <summary>A retainer's listing count, with the Unix time it was read off
+    /// the open sell list, or null when it is the game's own count.</summary>
+    public readonly record struct Count(int Listings, double? ReadAt);
 
     /// <summary>Record <paramref name="live"/> listings on
-    /// <paramref name="retainerId"/>, read while the game reported
-    /// <paramref name="gameCount"/>.</summary>
-    public void Remember(ulong retainerId, int live, int gameCount)
-        => _seen[retainerId] = (live, gameCount);
+    /// <paramref name="retainerId"/>, read at Unix time <paramref name="readAt"/>
+    /// while the game reported <paramref name="gameCount"/>.</summary>
+    public void Remember(ulong retainerId, int live, int gameCount, double readAt)
+        => _seen[retainerId] = (live, gameCount, readAt);
 
     /// <summary>The count to trust for <paramref name="retainerId"/> when the
     /// game reports <paramref name="gameCount"/>.</summary>
-    public int Resolve(ulong retainerId, int gameCount)
+    public Count Resolve(ulong retainerId, int gameCount)
     {
         if (!_seen.TryGetValue(retainerId, out var seen))
-            return gameCount;
+            return new Count(gameCount, null);
         if (seen.GameAt == gameCount)
-            return seen.Live;
+            return new Count(seen.Live, seen.ReadAt);
         _seen.Remove(retainerId);
-        return gameCount;
+        return new Count(gameCount, null);
     }
 }
