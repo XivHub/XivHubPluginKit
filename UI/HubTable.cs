@@ -59,6 +59,8 @@ public static class HubTable
     public static void Icon(string id, float size, ImGuiTableColumnFlags extra = 0)
         => ImGui.TableSetupColumn(id, ImGuiTableColumnFlags.WidthFixed | extra, size * ImGuiHelpers.GlobalScale);
 
+    /// <summary>A one-line cell. Like every cell helper here it moves to the next column itself, so
+    /// it is never preceded by <c>ImGui.TableNextColumn</c>, which would skip a column.</summary>
     public static void Cell(string text)
     {
         ImGui.TableNextColumn();
@@ -66,6 +68,7 @@ public static class HubTable
         ImGui.Text(text);
     }
 
+    /// <inheritdoc cref="Cell(string)"/>
     public static void Cell(Vector4 color, string text)
     {
         ImGui.TableNextColumn();
