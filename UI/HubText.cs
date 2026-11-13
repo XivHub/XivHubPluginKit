@@ -24,7 +24,9 @@ public static class HubText
     public static void Accent(string text) => Colored(HubStyle.Accent, text);
 
     /// <summary>Coloured text that wraps at the window edge, for a message whose length isn't fixed
-    /// (an error or a result that quotes the game or a server).</summary>
+    /// (an error or a result that quotes the game or a server). It wraps at the edge of whatever space
+    /// is left, so after <c>ImGui.SameLine</c> (or in a narrow table cell) it breaks every few letters:
+    /// text that shares a line uses <see cref="Inline"/>.</summary>
     public static void Colored(Vector4 color, string text)
     {
         ImGui.PushTextWrapPos(0);
