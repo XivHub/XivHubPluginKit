@@ -266,6 +266,36 @@ public static class HubStyle
     public static IDisposable Primary() =>
         Enabled && (ImGuiP.GetItemFlags() & ImGuiItemFlags.Disabled) == 0 ? new PrimaryScope() : NullScope.Instance;
 
+    /// <summary>
+    /// A window that needs the player now (their turn at a table, a prompt waiting on them):
+    /// a gold title bar and a gold border whose strength follows <paramref name="pulse"/>
+    /// (0 to 1, the caller animates it). Open it in <c>Window.PreDraw</c> and dispose it in
+    /// <c>PostDraw</c>, so the title bar and border, which ImGui draws in <c>Begin</c>, take it.
+    /// A no-op when the theme is switched off, for the same reason as <see cref="Primary"/>.
+    /// </summary>
+    public static IDisposable Attention(float pulse) =>
+        Enabled ? new AttentionScope(Math.Clamp(pulse, 0f, 1f)) : NullScope.Instance;
+
+    private sealed class AttentionScope : IDisposable
+    {
+        public AttentionScope(float pulse)
+        {
+            // The dim gold keeps the title's light text readable; Text itself is not pushed, as
+            // it would also recolour everything the window draws.
+            ImGui.PushStyleColor(ImGuiCol.TitleBg, HubColors.Get("HubGoldDim"));
+            ImGui.PushStyleColor(ImGuiCol.TitleBgActive, HubColors.Get("HubGoldDim"));
+            ImGui.PushStyleColor(ImGuiCol.TitleBgCollapsed, HubColors.Get("HubGoldDim"));
+            ImGui.PushStyleColor(ImGuiCol.Border, HubColors.Get("HubGoldBright", 0.35f + 0.65f * pulse));
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f + 2f * pulse);
+        }
+
+        public void Dispose()
+        {
+            ImGui.PopStyleVar(1);
+            ImGui.PopStyleColor(4);
+        }
+    }
+
     private sealed class NullScope : IDisposable
     {
         public static readonly NullScope Instance = new();
