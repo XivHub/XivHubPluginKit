@@ -4,8 +4,11 @@ using XivHubPluginKit.Retainer;
 namespace XivHubPluginKit.Pinch;
 
 /// <summary>Per-run pricing policy, read fresh on every use.</summary>
+/// <param name="ProtectGilTransfers">Leave a listing priced far above the market alone; see
+/// <see cref="PinchDecision.TransferPriceRatio"/>.</param>
 public readonly record struct PinchSettings(
-    int PerItemDelayMs, int MarketBoardDelayMs, bool SkipIfNoCompetitor, bool AnnounceEachReprice);
+    int PerItemDelayMs, int MarketBoardDelayMs, bool SkipIfNoCompetitor, bool AnnounceEachReprice,
+    bool ProtectGilTransfers = true);
 
 /// <summary>
 /// What to do with one listing: the price to write, or null to leave it where

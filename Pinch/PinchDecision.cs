@@ -8,8 +8,9 @@ public static class PinchDecision
     /// <summary>
     /// A listing priced more than this many times the cheapest competitor is a
     /// gil transfer: priced to move an amount to another of our characters,
-    /// not to sell. Repricing it would ruin the transfer, so it is left alone.
-    /// The server applies the same ratio when it judges what is due.
+    /// not to sell. Repricing it would ruin the transfer, so it is left alone
+    /// unless the caller turns that protection off. The server applies the same
+    /// ratio when it judges what is due.
     /// </summary>
     public const uint TransferPriceRatio = 10;
 
@@ -38,12 +39,13 @@ public static class PinchDecision
     /// touching. The comparison is on the gil that reaches you, since the board
     /// takes its cut first.
     /// </summary>
-    public static PriceDecision Decide(LivePrice result, uint curPrice, int floor, bool skipIfNoCompetitor)
+    public static PriceDecision Decide(LivePrice result, uint curPrice, int floor, bool skipIfNoCompetitor,
+        bool protectGilTransfers = true)
     {
         uint target;
         string why;
 
-        if (result.Competitor > 0 && (ulong)curPrice > (ulong)result.Competitor * TransferPriceRatio)
+        if (protectGilTransfers && result.Competitor > 0 && (ulong)curPrice > (ulong)result.Competitor * TransferPriceRatio)
             return new PriceDecision(null, $"looks like a gil transfer ({curPrice:N0} against {result.Competitor:N0}); left alone", true);
 
         if (result.Competitor > 0)

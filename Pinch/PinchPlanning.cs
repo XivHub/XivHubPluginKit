@@ -46,10 +46,11 @@ public static class PinchPlanning
     /// been asked about yet has to be visited, because opening the window is
     /// how it gets asked.
     /// </summary>
-    public static bool NeedsVisit(LivePrice? cached, uint price, int floor, bool skipIfNoCompetitor)
+    public static bool NeedsVisit(LivePrice? cached, uint price, int floor, bool skipIfNoCompetitor,
+        bool protectGilTransfers = true)
     {
         if (cached is null) return true;
 
-        return PinchDecision.Decide(cached.Value, price, floor, skipIfNoCompetitor).Write is not null;
+        return PinchDecision.Decide(cached.Value, price, floor, skipIfNoCompetitor, protectGilTransfers).Write is not null;
     }
 }

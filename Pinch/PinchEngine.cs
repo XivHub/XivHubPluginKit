@@ -843,9 +843,9 @@ public sealed class PinchEngine : IDisposable
         if (row.Price == 0 || row.Name.Length == 0
             || !plan.Live.TryGetValue((row.Name, row.Hq), out uint itemId)
             || !_probe.TryGetCached(itemId, row.Hq, out LivePrice cached)
-            || PinchPlanning.NeedsVisit(cached, row.Price, _profitFloor(itemId), _settings().SkipIfNoCompetitor))
+            || PinchPlanning.NeedsVisit(cached, row.Price, _profitFloor(itemId), _settings().SkipIfNoCompetitor, _settings().ProtectGilTransfers))
             return true;
-        if (PinchDecision.Decide(cached, row.Price, _profitFloor(itemId), _settings().SkipIfNoCompetitor).Held)
+        if (PinchDecision.Decide(cached, row.Price, _profitFloor(itemId), _settings().SkipIfNoCompetitor, _settings().ProtectGilTransfers).Held)
             RecordLiveHold(itemId, row.Hq, row.Price, cached.Competitor);
         _settled.Add(row.Hq ? row.Name + " (HQ)" : row.Name);
         _rowUnavailable = true;
@@ -1055,7 +1055,7 @@ public sealed class PinchEngine : IDisposable
         if (!_probe.TryGetCached(row.ItemId, row.Hq, out LivePrice cached))
             return true;
 
-        if (PinchPlanning.NeedsVisit(cached, row.Price, _profitFloor(row.ItemId), _settings().SkipIfNoCompetitor))
+        if (PinchPlanning.NeedsVisit(cached, row.Price, _profitFloor(row.ItemId), _settings().SkipIfNoCompetitor, _settings().ProtectGilTransfers))
             return true;
 
         _log.Debug("Pinch: {Item} (hq={Hq}) — already at {Price:N0} from this run's board read; no window needed",
@@ -1068,7 +1068,7 @@ public sealed class PinchEngine : IDisposable
         AddonRetainerSell* addon, string name, bool hq, uint curPrice, LivePrice result)
     {
         int floor = _profitFloor(_liveItemId);
-        PriceDecision d = PinchDecision.Decide(result, curPrice, floor, _settings().SkipIfNoCompetitor);
+        PriceDecision d = PinchDecision.Decide(result, curPrice, floor, _settings().SkipIfNoCompetitor, _settings().ProtectGilTransfers);
 
         if (d.Write is null)
         {

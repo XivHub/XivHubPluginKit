@@ -148,6 +148,17 @@ public class PinchDecisionTests
     }
 
     [Fact]
+    public void AGilTransferIsRepricedWhenProtectionIsOff()
+    {
+        var result = new LivePrice(Competitor: 50_000, HistoryPrice: 0, OffersComplete: true);
+
+        var d = PinchDecision.Decide(result, curPrice: 800_000, floor: 0, skipIfNoCompetitor: false,
+            protectGilTransfers: false);
+
+        Assert.Equal((uint?)49_999, d.Write);
+    }
+
+    [Fact]
     public void TenTimesTheCompetitorIsStillRepriced()
     {
         var result = new LivePrice(Competitor: 50_000, HistoryPrice: 0, OffersComplete: true);
