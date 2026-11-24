@@ -11,7 +11,8 @@ namespace XivHubPluginKit.License;
 /// <summary>
 /// What gamba.xivhub.net signs when a character may run licensed games. Field names follow the
 /// server's JSON (<c>gamba-server/src/grant.rs</c>, <c>GrantPayload</c>); times are unix seconds.
-/// A license is per game, so the grant lists each game the character holds.
+/// A license is per game, so the grant lists each game the character holds. <see cref="Diagnostics"/>: the
+/// customer's dealers may turn on a plugin's diagnostics; the server leaves it out when false.
 /// </summary>
 public sealed record LicenseGrant(
     int V,
@@ -20,7 +21,8 @@ public sealed record LicenseGrant(
     string Plugin,
     long IssuedAt,
     long Until,
-    IReadOnlyList<GameGrant> Games)
+    IReadOnlyList<GameGrant> Games,
+    bool Diagnostics = false)
 {
     /// <summary>Whether this grant is for the character with <paramref name="cidHash"/> and still in date.</summary>
     public bool Covers(string cidHash, long now) => CidHash == cidHash && now < Until;

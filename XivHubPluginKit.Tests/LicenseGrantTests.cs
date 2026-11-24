@@ -40,6 +40,20 @@ public class LicenseGrantTests
     }
 
     [Fact]
+    public void DiagnosticsAreOffUnlessTheGrantSaysSo()
+    {
+        Assert.False(GrantVerifier.Verify(new SignedGrant(Payload, Signature), Key)!.Diagnostics);
+
+        // The same payload with the server's field added, signed here with a key of the same kind.
+        using var key = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+        string payload = Payload[..^1] + ",\"diagnostics\":true}";
+        var signature = System.Convert.ToBase64String(key.SignData(System.Text.Encoding.UTF8.GetBytes(payload),
+            System.Security.Cryptography.HashAlgorithmName.SHA256));
+        var spki = System.Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
+        Assert.True(GrantVerifier.Verify(new SignedGrant(payload, signature), spki)!.Diagnostics);
+    }
+
+    [Fact]
     public void AGameEndsAtItsOwnDateWithinALiveGrant()
     {
         var grant = new LicenseGrant(2, "h", "A B@C", "P", 0, 10_000,
