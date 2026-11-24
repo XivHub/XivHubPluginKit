@@ -45,6 +45,7 @@ public class GambaTableTests
         (string Player, string Url) link = default;
         Assert.True(SpinWait.SpinUntil(() => table.TryTakeLink(out link), Wait));
         Assert.Equal("Asure Namei", link.Player);
+        Assert.Equal($"{server.Origin}/v/gilded", table.Page);
         Assert.Equal($"{server.Origin}/re/SHORT234", link.Url);
         string watcher = "";
         Assert.True(SpinWait.SpinUntil(() => table.TryTakeWatcher(out watcher), Wait));
@@ -150,7 +151,7 @@ public class GambaTableTests
             {
                 HellosQueue.Enqueue(Parse(await Receive(ws)));
                 string reply = Refuse is null
-                    ? JsonSerializer.Serialize(new { type = "room", code = "ABC234" })
+                    ? JsonSerializer.Serialize(new { type = "room", code = "ABC234", page = $"{Origin}/v/gilded" })
                     : JsonSerializer.Serialize(new { type = "refused", message = Refuse });
                 await ws.SendAsync(Encoding.UTF8.GetBytes(reply), WebSocketMessageType.Text, true, stopping.Token);
                 if (Refuse is not null)

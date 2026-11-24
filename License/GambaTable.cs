@@ -40,6 +40,9 @@ public sealed class GambaTable : IDisposable
     /// <summary>The code watchers use, once the server gave one; kept across reconnects.</summary>
     public string? Room { get; private set; }
 
+    /// <summary>The customer's public page (their name, schedule and open tables), when they have one.</summary>
+    public string? Page { get; private set; }
+
     /// <summary>Where the table stands, in words for the dealer.</summary>
     public string Status { get; private set; } = "Connecting to the live table.";
 
@@ -120,6 +123,7 @@ public sealed class GambaTable : IDisposable
                 }
                 if (type != "room") throw new InvalidOperationException($"unexpected first reply \"{type}\"");
                 Room = root.GetProperty("code").GetString();
+                Page = root.TryGetProperty("page", out var page) && page.ValueKind == JsonValueKind.String ? page.GetString() : null;
                 Status = $"Live as table {Room}.";
                 backoff = TimeSpan.FromSeconds(1);
                 await PumpAsync(ws);
