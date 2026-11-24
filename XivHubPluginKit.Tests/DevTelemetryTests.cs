@@ -346,19 +346,33 @@ public sealed class DevTelemetryTests
         var t = new DevTelemetry("Test", () => true, () => server.LogUrl);
         Assert.True(SpinWait.SpinUntil(() => server.Posts("/log").Count > 0, Wait));
 
+        // The multi-line post is stored but its reply never comes before Dispose aborts the wait, so
+        // the dispose flush sends it again from the same offset with "four" appended.
+        server.LogReplyDelayMs = 10_000;
         t.Log("one\ntwo\r\nthree\r");
         Assert.True(SpinWait.SpinUntil(() => server.Posts("/log").Count > 1, Wait));
         t.Log("four");
         t.Dispose();
+        Assert.Equal(server.Posts("/log")[1].Offset, server.Posts("/log")[^1].Offset);
 
-        // The server gives each '\n'-terminated line one stream position, so each post must start
-        // where the previous one's lines end.
-        var posts = server.Posts("/log").OrderBy(p => long.Parse(p.Offset!, CultureInfo.InvariantCulture)).ToList();
-        for (int i = 1; i < posts.Count; i++)
-            Assert.Equal(long.Parse(posts[i - 1].Offset!, CultureInfo.InvariantCulture) + posts[i - 1].Text.Split('\n').Length - 1,
-                long.Parse(posts[i].Offset!, CultureInfo.InvariantCulture));
+        // The server gives each '\n'-terminated line one stream position and keeps the first copy of
+        // each: a post it stored while the client was still waiting (Dispose aborts that wait) comes
+        // again from the same offset with the newer lines appended. Read the posts the same way: the
+        // positions must run without a gap, and a line sent twice must be the same line both times.
+        var byPosition = new SortedDictionary<long, string>();
+        foreach (var p in server.Posts("/log"))
+        {
+            long at = long.Parse(p.Offset!, CultureInfo.InvariantCulture);
+            foreach (var line in p.Text.Split('\n')[..^1])
+            {
+                if (byPosition.TryGetValue(at, out var seen)) Assert.Equal(seen, line);
+                else byPosition[at] = line;
+                at++;
+            }
+        }
+        Assert.Equal(Enumerable.Range(0, byPosition.Count).Select(i => (long)i), byPosition.Keys);
 
-        var lines = posts.SelectMany(p => p.Text.Split('\n')[..^1]).ToList();
+        var lines = byPosition.Values.ToList();
         Assert.All(lines, l => Assert.Matches(@"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} \[Test\] ", l));
         var bodies = lines.Select(l => l[(l.IndexOf("] ", StringComparison.Ordinal) + 2)..]).ToList();
         Assert.StartsWith("telemetry session started, ", bodies[0]);
@@ -560,6 +574,9 @@ public sealed class DevTelemetryTests
         public volatile int RecordsStatus = 204;
         public volatile int LogDelayMs;
         public volatile int RecordsDelayMs;
+        /// <summary>A wait on /log after the post is stored and before the reply: the post the client
+        /// gives up on although the server holds it.</summary>
+        public volatile int LogReplyDelayMs;
 
         public string LogUrl { get; }
 
@@ -627,6 +644,7 @@ public sealed class DevTelemetryTests
                 int status = path == "/records" ? RecordsStatus : LogStatus;
                 posts.Enqueue(new Post(path, req.Url.Query, req.Headers["X-Devlog-Session"], req.Headers["X-Devlog-Offset"],
                     req.ContentType, status, body.ToArray()));
+                if (path == "/log" && LogReplyDelayMs > 0) await Task.Delay(LogReplyDelayMs, stopping.Token);
                 ctx.Response.StatusCode = status;
                 ctx.Response.Close();
             }
