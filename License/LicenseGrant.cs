@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,21 +9,32 @@ using System.Text.Json.Serialization;
 namespace XivHubPluginKit.License;
 
 /// <summary>
-/// What gamba.xivhub.net signs when a character may run a licensed plugin. Field names follow the
+/// What gamba.xivhub.net signs when a character may run licensed games. Field names follow the
 /// server's JSON (<c>gamba-server/src/grant.rs</c>, <c>GrantPayload</c>); times are unix seconds.
+/// A license is per game, so the grant lists each game the character holds.
 /// </summary>
 public sealed record LicenseGrant(
     int V,
-    long LicenseId,
     string CidHash,
     string NameWorld,
     string Plugin,
-    long LicenseExpiresAt,
     long IssuedAt,
-    long Until)
+    long Until,
+    IReadOnlyList<GameGrant> Games)
 {
-    /// <summary>Whether this grant lets the character with <paramref name="cidHash"/> run now.</summary>
+    /// <summary>Whether this grant is for the character with <paramref name="cidHash"/> and still in date.</summary>
     public bool Covers(string cidHash, long now) => CidHash == cidHash && now < Until;
+
+    /// <summary>Whether the character may run <paramref name="game"/> now: covered, and that game's
+    /// own license has not ended.</summary>
+    public bool AllowsGame(string game, string cidHash, long now) =>
+        Covers(cidHash, now) && Games.Any(g => g.Game == game && g.IsLive(now));
+}
+
+/// <summary>One licensed game. <see cref="ExpiresAt"/> null: the license never ends.</summary>
+public sealed record GameGrant(string Game, long LicenseId, long? ExpiresAt)
+{
+    public bool IsLive(long now) => ExpiresAt is null || now < ExpiresAt;
 }
 
 /// <summary>The server's answer: the payload exactly as signed, and its signature.</summary>
@@ -37,7 +50,7 @@ public sealed record SignedGrant(
 public static class GrantVerifier
 {
     /// <summary>The grant format this client understands.</summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     private static readonly JsonSerializerOptions Json = new()
     {

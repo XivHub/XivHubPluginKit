@@ -10,19 +10,21 @@ public class LicenseGrantTests
     // (`cargo test print_fixture_for_the_csharp_client -- --ignored --nocapture`), so this proves
     // the two sides agree on key encoding, signature format and field names.
     private const string Key =
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJgBRmOAvj3q4DVap8JwllV014u365lmjj4gZTXi20kiKQlczxokyQEtd4wDcrRO0bPV6L6xx2gLC7g82afH3sw==";
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+6kv188gQ5ocsJOxhNJQlrh4+u0enZeTPZJzfr4VOFzykP3eDzgJt0O017lNjP/DrMh+sk3zVArKqlvsSNISuA==";
     private const string Payload =
-        "{\"v\":1,\"license_id\":7,\"cid_hash\":\"abababababababababababababababababababababababababababababababab\",\"name_world\":\"Zhyra Valen@Cactuar\",\"plugin\":\"XivHubDealer\",\"license_expires_at\":2000,\"issued_at\":1000,\"until\":1500}";
+        "{\"v\":2,\"cid_hash\":\"abababababababababababababababababababababababababababababababab\",\"name_world\":\"Zhyra Valen@Cactuar\",\"plugin\":\"XivHubDealer\",\"issued_at\":1000,\"until\":1500,\"games\":[{\"game\":\"blackjack\",\"license_id\":7,\"expires_at\":2000},{\"game\":\"roulette\",\"license_id\":8,\"expires_at\":null}]}";
     private const string Signature =
-        "cp7qeN8MqTrxeSEHFej/qksQ69m4Zs34+2P1C+0OvsptdvidyR8IvKAH9vriWorUxn/zzsWIoVEV0sSkCkCqFQ==";
+        "358SeETdGpF1w3nYJNm6ek0C9f/3/IC/NSrx5M7i/fRujP+vt4x622Pxw68Y/HXPbtwVAki0IkAnqZph0crpjA==";
 
     [Fact]
     public void VerifiesAServerSignedGrant()
     {
         var grant = GrantVerifier.Verify(new SignedGrant(Payload, Signature), Key);
         Assert.NotNull(grant);
-        Assert.Equal(7, grant.LicenseId);
         Assert.Equal("Zhyra Valen@Cactuar", grant.NameWorld);
+        Assert.Equal(2, grant.Games.Count);
+        Assert.Equal(new GameGrant("blackjack", 7, 2000), grant.Games[0]);
+        Assert.Null(grant.Games[1].ExpiresAt);
         Assert.Equal("XivHubDealer", grant.Plugin);
         Assert.Equal(1500, grant.Until);
         var cid = string.Concat(Enumerable.Repeat("ab", 32));
@@ -30,12 +32,27 @@ public class LicenseGrantTests
         Assert.True(grant.Covers(cid, 1499));
         Assert.False(grant.Covers(grant.CidHash, 1500));
         Assert.False(grant.Covers(new string('c', 64), 1000));
+
+        Assert.True(grant.AllowsGame("blackjack", cid, 1499));
+        Assert.True(grant.AllowsGame("roulette", cid, 1499));
+        Assert.False(grant.AllowsGame("poker", cid, 1000));
+        Assert.False(grant.AllowsGame("roulette", cid, 1500), "the grant itself ended");
+    }
+
+    [Fact]
+    public void AGameEndsAtItsOwnDateWithinALiveGrant()
+    {
+        var grant = new LicenseGrant(2, "h", "A B@C", "P", 0, 10_000,
+            [new GameGrant("blackjack", 1, 100), new GameGrant("roulette", 2, null)]);
+        Assert.False(grant.AllowsGame("blackjack", "h", 100));
+        Assert.True(grant.AllowsGame("roulette", "h", 9_999));
     }
 
     [Fact]
     public void RefusesATamperedPayloadOrSignature()
     {
         var tampered = Payload.Replace("\"until\":1500", "\"until\":9999");
+        Assert.NotEqual(Payload, tampered);
         Assert.Null(GrantVerifier.Verify(new SignedGrant(tampered, Signature), Key));
         var badSig = "A" + Signature[1..];
         Assert.Null(GrantVerifier.Verify(new SignedGrant(Payload, badSig), Key));

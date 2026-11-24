@@ -31,8 +31,19 @@ public enum LicenseStatus
 /// <summary>One immutable reading of the license, safe to read from the draw thread.</summary>
 public sealed record LicenseState(LicenseStatus Status, LicenseGrant? Grant, string Message)
 {
-    /// <summary>Whether the plugin may run its licensed features right now.</summary>
-    public bool Allows => Status is LicenseStatus.Licensed or LicenseStatus.Offline;
+    /// <summary>Whether this character may run <paramref name="game"/> right now. Licenses are per
+    /// game, so a plugin checks the game it is about to run, not the license as a whole.</summary>
+    public bool AllowsGame(string game) =>
+        Status is LicenseStatus.Licensed or LicenseStatus.Offline
+        && Grant is { } g
+        && g.AllowsGame(game, g.CidHash, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+    /// <summary>Why <paramref name="game"/> may not run, or null when it may.</summary>
+    public string? Refusal(string game) =>
+        AllowsGame(game) ? null
+        : Grant is { } g && (Status is LicenseStatus.Licensed or LicenseStatus.Offline)
+            ? $"{g.NameWorld} has no live {game} license."
+            : Message;
 }
 
 /// <summary>
