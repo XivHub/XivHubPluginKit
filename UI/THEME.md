@@ -58,9 +58,11 @@ it before every commit that touches UI code.
 
 - **Text**: `HubText.Bad`/`Warn`/`Good`/`Info`/`Faint`/`Muted`/`Accent(text)` draw a `HubStyle` role
   wrapped at the window edge, so a role colour never becomes an unreadable single line running off
-  the window; `Colored(color, text)` is the same for a colour outside those seven. `Inline(color,
+  the window; `Colored(color, text)` is the same for a colour outside those seven. `Section(title)` is a
+  heading inside a window or tab: a small gap, then the title in the accent. `Inline(color,
   text)` does not wrap, for a coloured fragment built with `SameLine` (a number inside a sentence).
-- **Tables**: `HubTable.Begin(id, columns, size, extra)` sets `RowBg | Resizable | NoSavedSettings`
+- **Tables**: `HubTable.Begin(id, columns, size, extra)` sets `RowBg | Resizable | BordersOuter |
+  BordersInnerV | NoSavedSettings`
   plus whatever `extra` asks for, leaving out `NoSavedSettings` when `extra` has `Hideable` or
   `Reorderable` (the user's hidden and reordered columns should come back; change such a table's
   id when its columns change); `End()` closes it. `Stretch(name, weight, extra)` and `Fit(name, extra)`

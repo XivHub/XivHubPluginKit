@@ -1,5 +1,6 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility;
 
 namespace XivHubPluginKit.UI;
 
@@ -22,6 +23,14 @@ public static class HubText
     public static void Faint(string text) => Colored(HubStyle.Faint, text);
     public static void Muted(string text) => Colored(HubStyle.Muted, text);
     public static void Accent(string text) => Colored(HubStyle.Accent, text);
+
+    /// <summary>A section heading inside a window or tab: a gap above, then the title in the accent,
+    /// so sections separate without a rule between each.</summary>
+    public static void Section(string title)
+    {
+        ImGui.Dummy(new Vector2(0, 6 * ImGuiHelpers.GlobalScale));
+        Accent(title);
+    }
 
     /// <summary>Coloured text that wraps at the window edge, for a message whose length isn't fixed
     /// (an error or a result that quotes the game or a server). It wraps at the edge of whatever space

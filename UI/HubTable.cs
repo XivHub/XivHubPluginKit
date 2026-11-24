@@ -24,11 +24,17 @@ public static class HubTable
     /// such a table a new <paramref name="id"/> when its columns change.</summary>
     public static bool Begin(string id, int columns, Vector2 size = default, ImGuiTableFlags extra = 0)
     {
-        var flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | extra;
+        var flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersOuter
+            | ImGuiTableFlags.BordersInnerV | extra;
         if ((extra & (ImGuiTableFlags.Hideable | ImGuiTableFlags.Reorderable)) == 0)
             flags |= ImGuiTableFlags.NoSavedSettings;
         return ImGui.BeginTable(id, columns, flags, size);
     }
+
+    /// <summary>A layout grid rather than data: no borders, no zebra, columns sharing the width
+    /// evenly. For a row of figures (a label over each value) that should shrink with the window.</summary>
+    public static bool BeginGrid(string id, int columns) =>
+        ImGui.BeginTable(id, columns, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoSavedSettings);
 
     public static void End() => ImGui.EndTable();
 

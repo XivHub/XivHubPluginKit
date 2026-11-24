@@ -104,8 +104,8 @@ public static class HubStyle
         new("color.tabUnfocusedActive","Tab (Unfocused Active)", "HubGold",        ImGuiCol.TabUnfocusedActive, 0.20f),
 
         new("color.tableHeaderBg",   "Table Header Background",  "HubTableHead",   ImGuiCol.TableHeaderBg),
-        new("color.tableBorderStrong","Table Border (Strong)",   "HubText",        ImGuiCol.TableBorderStrong, 0.14f),
-        new("color.tableBorderLight","Table Border (Light)",     "HubText",        ImGuiCol.TableBorderLight, 0.04f),
+        new("color.tableBorderStrong","Table Border (Strong)",   "HubText",        ImGuiCol.TableBorderStrong, 0.24f),
+        new("color.tableBorderLight","Table Border (Light)",     "HubText",        ImGuiCol.TableBorderLight, 0.10f),
         new("color.tableRowBg",      "Table Row Background",     "HubGround",      ImGuiCol.TableRowBg, 0f),
         new("color.tableRowBgAlt",   "Table Row Background (Alt)","HubText",       ImGuiCol.TableRowBgAlt, 0.022f,
             "Zebra striping. Any stronger and gold in the cells stops reading."),
