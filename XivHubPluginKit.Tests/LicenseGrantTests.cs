@@ -10,11 +10,11 @@ public class LicenseGrantTests
     // (`cargo test print_fixture_for_the_csharp_client -- --ignored --nocapture`), so this proves
     // the two sides agree on key encoding, signature format and field names.
     private const string Key =
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+6kv188gQ5ocsJOxhNJQlrh4+u0enZeTPZJzfr4VOFzykP3eDzgJt0O017lNjP/DrMh+sk3zVArKqlvsSNISuA==";
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENSsPPL+HWY19kob1AiiRpbf5+NzXzW+GMUC6rELguZJTTFTfgzKa5vS2VWDbXBEo1o4tCV/n23rCvylOQfG7aQ==";
     private const string Payload =
-        "{\"v\":2,\"cid_hash\":\"abababababababababababababababababababababababababababababababab\",\"name_world\":\"Zhyra Valen@Cactuar\",\"plugin\":\"XivHubDealer\",\"issued_at\":1000,\"until\":1500,\"games\":[{\"game\":\"blackjack\",\"license_id\":7,\"expires_at\":2000},{\"game\":\"roulette\",\"license_id\":8,\"expires_at\":null}]}";
+        "{\"v\":2,\"cid_hash\":\"abababababababababababababababababababababababababababababababab\",\"name_world\":\"Zhyra Valen@Cactuar\",\"plugin\":\"CrystalTable\",\"issued_at\":1000,\"until\":1500,\"games\":[{\"game\":\"blackjack\",\"license_id\":7,\"expires_at\":2000},{\"game\":\"roulette\",\"license_id\":8,\"expires_at\":null}]}";
     private const string Signature =
-        "358SeETdGpF1w3nYJNm6ek0C9f/3/IC/NSrx5M7i/fRujP+vt4x622Pxw68Y/HXPbtwVAki0IkAnqZph0crpjA==";
+        "fpooK3DEpuJGXqwcA+rVATjO784EdFw5ucGcw//+7J2wRbhAu7VCeq89ygb0lk5hT4aiy6WBFmya07LeVpKOIw==";
 
     [Fact]
     public void VerifiesAServerSignedGrant()
@@ -25,7 +25,7 @@ public class LicenseGrantTests
         Assert.Equal(2, grant.Games.Count);
         Assert.Equal(new GameGrant("blackjack", 7, 2000), grant.Games[0]);
         Assert.Null(grant.Games[1].ExpiresAt);
-        Assert.Equal("XivHubDealer", grant.Plugin);
+        Assert.Equal("CrystalTable", grant.Plugin);
         Assert.Equal(1500, grant.Until);
         var cid = string.Concat(Enumerable.Repeat("ab", 32));
         Assert.Equal(cid, grant.CidHash);
