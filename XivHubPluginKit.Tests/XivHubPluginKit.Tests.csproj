@@ -29,6 +29,7 @@
     <Compile Include="..\Pinch\PinchPlanning.cs" Link="Pinch\PinchPlanning.cs" />
     <Compile Include="..\LogTemplate.cs" Link="LogTemplate.cs" />
     <Compile Include="..\Retainer\MarketCounts.cs" Link="Retainer\MarketCounts.cs" />
+    <Compile Include="..\License\LicenseGrant.cs" Link="License\LicenseGrant.cs" />
   </ItemGroup>
 
 </Project>
