@@ -71,6 +71,8 @@ it before every commit that touches UI code.
   scaled by `ImGuiHelpers.GlobalScale`. `Cell(text)`, `Cell(color, text)`, `Number(text)`
   (right-aligned) and `Wrapped(color, text)` (wraps at the column edge, for a sentence in a stretch
   column) are the per-cell draws.
+  `BeginGrid(id, columns)` is a layout grid, not data: no borders or zebra, equal columns, for a
+  row of figures (a label over each value) that shrinks with the window.
 - **Buttons**: `HubButton.Draw(label)` / `Small(label)` replace `ImGui.Button`/`SmallButton` for every
   button that is not the window's `Primary()`. The fill comes from the table (`color.button`, slate);
   the gold rim cannot, since ImGui has one `Border` colour for every frame, so the helper pushes it
