@@ -36,6 +36,25 @@ public class GambaTableTests
     }
 
     [Fact]
+    public void ALinkRequestComesBackAsTheTablePageWithThePlayersSecret()
+    {
+        using var server = new FakeTableServer();
+        using var table = new GambaTable(server.Origin, "tok", Cid, "roulette");
+        Assert.True(SpinWait.SpinUntil(() => table.Room == "ABC234", Wait));
+        table.RequestLink("Asure Namei");
+        (string Player, string Url) link = default;
+        Assert.True(SpinWait.SpinUntil(() => table.TryTakeLink(out link), Wait));
+        Assert.Equal("Asure Namei", link.Player);
+        Assert.Equal($"{server.Origin}/t/ABC234?p=s3cr3t", link.Url);
+
+        table.SendPrivate("Asure Namei", new { kind = "bank", balance = 900_000 });
+        Assert.True(SpinWait.SpinUntil(() => server.Events.Any(e => e.GetProperty("kind").GetString() == "private"), Wait));
+        var p = server.Events.Single(e => e.GetProperty("kind").GetString() == "private");
+        Assert.Equal("Asure Namei", p.GetProperty("player").GetString());
+        Assert.Equal(900_000, p.GetProperty("event").GetProperty("balance").GetInt32());
+    }
+
+    [Fact]
     public void ARefusedTableStaysClosedWithTheServersReason()
     {
         using var server = new FakeTableServer { Refuse = "This character has no live roulette license." };
@@ -137,7 +156,13 @@ public class GambaTableTests
                 {
                     var text = await Receive(ws);
                     if (text is null) return;
-                    EventsQueue.Enqueue(Parse(text));
+                    var e = Parse(text);
+                    EventsQueue.Enqueue(e);
+                    if (e.GetProperty("kind").GetString() == "link")
+                    {
+                        var answer = JsonSerializer.Serialize(new { type = "link", player = e.GetProperty("player").GetString(), secret = "s3cr3t" });
+                        await ws.SendAsync(Encoding.UTF8.GetBytes(answer), WebSocketMessageType.Text, true, stopping.Token);
+                    }
                 }
             }
             catch (Exception e) when (e is WebSocketException or OperationCanceledException or ObjectDisposedException)

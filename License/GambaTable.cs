@@ -26,6 +26,8 @@ public sealed class GambaTable : IDisposable
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
 
     private readonly Uri endpoint;
+    private readonly string origin;
+    private readonly ConcurrentQueue<(string Player, string Url)> links = new();
     private readonly string helloToken;
     private readonly string cidHash;
     private readonly string game;
@@ -48,8 +50,9 @@ public sealed class GambaTable : IDisposable
     /// <param name="server">The gamba server's https origin, as <see cref="GambaLicense"/> uses it.</param>
     public GambaTable(string server, string token, string cidHash, string game)
     {
-        var origin = new Uri(server.TrimEnd('/'));
-        endpoint = new UriBuilder(origin) { Scheme = origin.Scheme == "http" ? "ws" : "wss", Path = "/ws/table" }.Uri;
+        origin = server.TrimEnd('/');
+        var uri = new Uri(origin);
+        endpoint = new UriBuilder(uri) { Scheme = uri.Scheme == "http" ? "ws" : "wss", Path = "/ws/table" }.Uri;
         helloToken = token;
         this.cidHash = cidHash;
         this.game = game;
@@ -64,6 +67,15 @@ public sealed class GambaTable : IDisposable
         while (outbox.Count > MaxQueued) outbox.TryDequeue(out _);
         wake.Release();
     }
+
+    /// <summary>Asks the server for <paramref name="player"/>'s private link; it arrives through <see cref="TryTakeLink"/>.</summary>
+    public void RequestLink(string player) => Send(new { kind = "link", player });
+
+    /// <summary>A link the server made, ready to send to its player: the table page with their secret.</summary>
+    public bool TryTakeLink(out (string Player, string Url) link) => links.TryDequeue(out link);
+
+    /// <summary>One event for <paramref name="player"/>'s private link only (their bank, a journal entry).</summary>
+    public void SendPrivate(string player, object evt) => Send(new { kind = "private", player, @event = evt });
 
     private string Hello() => JsonSerializer.Serialize(new
     {
@@ -139,6 +151,9 @@ public sealed class GambaTable : IDisposable
                     Refuse(root);
                     break;
                 }
+                if (type == "link" && Room is { } room)
+                    links.Enqueue((root.GetProperty("player").GetString() ?? "",
+                        $"{origin}/t/{room}?p={Uri.EscapeDataString(root.GetProperty("secret").GetString() ?? "")}"));
                 if (type == "error")
                     Status = $"Live as table {Room}; the server refused an event: {root.GetProperty("message").GetString()}";
             }
