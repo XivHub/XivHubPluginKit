@@ -78,10 +78,10 @@ public static class HubStyle
         new("color.sliderGrab",      "Slider Grab",              "HubGoldDim",     ImGuiCol.SliderGrab),
         new("color.sliderGrabActive","Slider Grab (Active)",     "HubGold",        ImGuiCol.SliderGrabActive),
 
-        new("color.button",          "Button",                   "HubGold",        ImGuiCol.Button, 0.26f,
-            "Brass over the dark ground, like the game's own buttons. Primary() is the solid fill above it."),
-        new("color.buttonHovered",   "Button (Hover)",           "HubGold",        ImGuiCol.ButtonHovered, 0.36f),
-        new("color.buttonActive",    "Button (Active)",          "HubGold",        ImGuiCol.ButtonActive, 0.46f),
+        new("color.button",          "Button",                   "HubFrameHover",  ImGuiCol.Button,
+            Description: "Slate, a step above the inputs; HubButton adds the gold rim. Primary() is the one solid gold fill."),
+        new("color.buttonHovered",   "Button (Hover)",           "HubHeaderHover", ImGuiCol.ButtonHovered),
+        new("color.buttonActive",    "Button (Active)",          "HubHeaderActive",ImGuiCol.ButtonActive),
 
         new("color.header",          "Header",                   "HubHeader",      ImGuiCol.Header,
             Description: "Collapsing headers, selected rows and tree nodes. Structure, so it stays cool."),
@@ -129,7 +129,7 @@ public static class HubStyle
     private static readonly Vector2Option[] _vectors =
     [
         new("vector.windowPadding",   "Window Padding",     9f, 9f, ImGuiStyleVar.WindowPadding),
-        new("vector.framePadding",    "Frame Padding",      8f, 4f, ImGuiStyleVar.FramePadding),
+        new("vector.framePadding",    "Frame Padding",      10f, 5f, ImGuiStyleVar.FramePadding),
         new("vector.cellPadding",     "Cell Padding",       8f, 5f, ImGuiStyleVar.CellPadding),
         new("vector.itemSpacing",     "Item Spacing",       5f, 5f, ImGuiStyleVar.ItemSpacing),
         new("vector.itemInnerSpacing","Item Inner Spacing", 6f, 4f, ImGuiStyleVar.ItemInnerSpacing),
@@ -139,11 +139,11 @@ public static class HubStyle
     [
         new("float.windowRounding",   "Window Rounding",    7f,   ImGuiStyleVar.WindowRounding,    0f, 20f),
         new("float.childRounding",    "Child Rounding",     4f,   ImGuiStyleVar.ChildRounding,     0f, 20f),
-        new("float.frameRounding",    "Frame Rounding",     4f,   ImGuiStyleVar.FrameRounding,     0f, 20f),
+        new("float.frameRounding",    "Frame Rounding",     2f,   ImGuiStyleVar.FrameRounding,     0f, 20f),
         new("float.popupRounding",    "Popup Rounding",     4f,   ImGuiStyleVar.PopupRounding,     0f, 20f),
         new("float.scrollbarRounding","Scrollbar Rounding", 5f,   ImGuiStyleVar.ScrollbarRounding, 0f, 20f),
-        new("float.grabRounding",     "Grab Rounding",      3f,   ImGuiStyleVar.GrabRounding,      0f, 20f),
-        new("float.tabRounding",      "Tab Rounding",       4f,   ImGuiStyleVar.TabRounding,       0f, 20f),
+        new("float.grabRounding",     "Grab Rounding",      2f,   ImGuiStyleVar.GrabRounding,      0f, 20f),
+        new("float.tabRounding",      "Tab Rounding",       2f,   ImGuiStyleVar.TabRounding,       0f, 20f),
         new("float.windowBorderSize", "Window Border Size", 1.5f, ImGuiStyleVar.WindowBorderSize,  0f, 5f),
         new("float.childBorderSize",  "Child Border Size",  1f,   ImGuiStyleVar.ChildBorderSize,   0f, 5f),
         new("float.popupBorderSize",  "Popup Border Size",  1.5f, ImGuiStyleVar.PopupBorderSize,   0f, 5f),
@@ -248,7 +248,7 @@ public static class HubStyle
     /// <summary>
     /// The one solid gold fill in the system, dark text on gold, for the single
     /// irreversible action in a window ("Confirm and run", "Apply 6 moves"). It
-    /// ranks above the brass tint every other button has. Wrap the button call:
+    /// ranks above the slate every other button has. Wrap the button call:
     /// <c>using (HubStyle.Primary()) if (ImGui.Button("Confirm")) …</c>.
     /// A window with two of these has a hierarchy problem, not a theme problem.
     /// </summary>
@@ -302,10 +302,14 @@ public static class HubStyle
         public void Dispose() { }
     }
 
+    /// <summary>Whether a <see cref="Primary"/> scope is open, so <see cref="HubButton"/> leaves its rim alone.</summary>
+    internal static bool InPrimary { get; private set; }
+
     private sealed class PrimaryScope : IDisposable
     {
         public PrimaryScope()
         {
+            InPrimary = true;
             ImGui.PushStyleColor(ImGuiCol.Button, HubColors.Get("HubGold"));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, HubColors.Get("HubGoldBright"));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, HubColors.Get("HubGoldDim"));
@@ -316,6 +320,7 @@ public static class HubStyle
 
         public void Dispose()
         {
+            InPrimary = false;
             ImGui.PopStyleVar(1);
             ImGui.PopStyleColor(5);
         }

@@ -51,7 +51,7 @@ changing a colour in one plugin reaches the rest.
 
 ## Helpers
 
-Four helpers sit next to the theme so a call site doesn't have to re-derive its rules (wrapping,
+Five helpers sit next to the theme so a call site doesn't have to re-derive its rules (wrapping,
 `NoSavedSettings`, `FittingPolicyScroll`, `ImGuiHelpers.GlobalScale`) each time. `tools/theme-lint.sh
 <plugin dir>` greps a plugin for the raw ImGui calls these replace and exits 1 if it finds any; run
 it before every commit that touches UI code.
@@ -69,6 +69,11 @@ it before every commit that touches UI code.
   scaled by `ImGuiHelpers.GlobalScale`. `Cell(text)`, `Cell(color, text)`, `Number(text)`
   (right-aligned) and `Wrapped(color, text)` (wraps at the column edge, for a sentence in a stretch
   column) are the per-cell draws.
+- **Buttons**: `HubButton.Draw(label)` / `Small(label)` replace `ImGui.Button`/`SmallButton` for every
+  button that is not the window's `Primary()`. The fill comes from the table (`color.button`, slate);
+  the gold rim cannot, since ImGui has one `Border` colour for every frame, so the helper pushes it
+  around the button and draws the brighter hover rim itself. A raw `ImGui.Button` still works and
+  shows the slate fill with the plain 12% hairline.
 - **Tabs**: `HubTabs.Begin(id)` / `End()` is `BeginTabBar`/`EndTabBar` with `FittingPolicyScroll`
   already set.
 - **Window height**: `HubWindow.FitHeight(this)`, called at the end of a `Window.Draw()`, caps that
@@ -85,7 +90,7 @@ ranks them.**
 | Strength | Where |
 | --- | --- |
 | Solid gold, dark text | `HubStyle.Primary()`: the one irreversible action in a window |
-| Brass tint (gold at 26%, 36% hover, 46% pressed) | every other button, like the game's own buttons |
+| Slate fill with a gold hairline (40%, bright on hover) | every other button, through `HubButton.Draw`/`Small` |
 | Gold tint (30%) | the selected tab |
 | Gold indicator | the check mark, the slider grab, a separator or scrollbar being dragged |
 
