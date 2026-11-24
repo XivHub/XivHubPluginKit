@@ -36,7 +36,7 @@ public class GambaTableTests
     }
 
     [Fact]
-    public void ALinkRequestComesBackAsTheTablePageWithThePlayersSecret()
+    public void ALinkRequestComesBackAsTheServersShortLinkAndAWatcherIsAnnounced()
     {
         using var server = new FakeTableServer();
         using var table = new GambaTable(server.Origin, "tok", Cid, "roulette");
@@ -45,7 +45,10 @@ public class GambaTableTests
         (string Player, string Url) link = default;
         Assert.True(SpinWait.SpinUntil(() => table.TryTakeLink(out link), Wait));
         Assert.Equal("Asure Namei", link.Player);
-        Assert.Equal($"{server.Origin}/t/ABC234?p=s3cr3t", link.Url);
+        Assert.Equal($"{server.Origin}/re/SHORT234", link.Url);
+        string watcher = "";
+        Assert.True(SpinWait.SpinUntil(() => table.TryTakeWatcher(out watcher), Wait));
+        Assert.Equal("Asure Namei", watcher);
 
         table.SendPrivate("Asure Namei", new { kind = "bank", balance = 900_000 });
         Assert.True(SpinWait.SpinUntil(() => server.Events.Any(e => e.GetProperty("kind").GetString() == "private"), Wait));
@@ -160,8 +163,13 @@ public class GambaTableTests
                     EventsQueue.Enqueue(e);
                     if (e.GetProperty("kind").GetString() == "link")
                     {
-                        var answer = JsonSerializer.Serialize(new { type = "link", player = e.GetProperty("player").GetString(), secret = "s3cr3t" });
-                        await ws.SendAsync(Encoding.UTF8.GetBytes(answer), WebSocketMessageType.Text, true, stopping.Token);
+                        var player = e.GetProperty("player").GetString();
+                        foreach (var answer in new[]
+                                 {
+                                     JsonSerializer.Serialize(new { type = "link", player, url = $"{Origin}/re/SHORT234" }),
+                                     JsonSerializer.Serialize(new { type = "watching", player }),
+                                 })
+                            await ws.SendAsync(Encoding.UTF8.GetBytes(answer), WebSocketMessageType.Text, true, stopping.Token);
                     }
                 }
             }
