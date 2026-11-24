@@ -124,6 +124,15 @@ public sealed class GambaLicense : IDisposable
         framework.Update += OnUpdate;
     }
 
+    /// <summary>
+    /// Opens a live table for <paramref name="game"/> as the character logged in now, or null when
+    /// this install has no repo token or no character is loaded. The caller disposes it.
+    /// </summary>
+    public GambaTable? OpenTable(string game) =>
+        token is null || !player.IsLoaded || player.ContentId == 0
+            ? null
+            : new GambaTable(server, token, LicenseIdentity.CidHash(player.ContentId), game);
+
     /// <summary>Asks the server again on the next frame, for a "Check again" button.</summary>
     public void Refresh() => nextCheck = DateTime.MinValue;
 

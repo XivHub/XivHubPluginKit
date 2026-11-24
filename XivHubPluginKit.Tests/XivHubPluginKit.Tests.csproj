@@ -30,6 +30,7 @@
     <Compile Include="..\LogTemplate.cs" Link="LogTemplate.cs" />
     <Compile Include="..\Retainer\MarketCounts.cs" Link="Retainer\MarketCounts.cs" />
     <Compile Include="..\License\LicenseGrant.cs" Link="License\LicenseGrant.cs" />
+    <Compile Include="..\License\GambaTable.cs" Link="License\GambaTable.cs" />
   </ItemGroup>
 
 </Project>
