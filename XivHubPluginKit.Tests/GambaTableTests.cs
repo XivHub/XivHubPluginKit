@@ -86,6 +86,60 @@ public class GambaTableTests
         Assert.True(SpinWait.SpinUntil(() => server.Events.Any(e => e.GetProperty("text").GetString() == "after the drop"), Wait));
     }
 
+    [Fact]
+    public void AFreshRoomGetsTheRulesAndTheRoundAgainButNotWhatItAlreadyHad()
+    {
+        using var server = new FakeTableServer { Fresh = [true, true] };
+        using var table = new GambaTable(server.Origin, "tok", Cid, "blackjack");
+        Assert.True(SpinWait.SpinUntil(() => table.Room == "ABC234", Wait));
+        Assert.Equal(1, table.FreshRooms);
+        table.Send(new { kind = "rules", lines = new[] { "Old rules." } });
+        table.Send(new { kind = "say", text = "last round" });
+        table.Send(new { kind = "bets_open", round = 2, min = 10, max = 100 });
+        table.Send(new { kind = "rules", lines = new[] { "Blackjack pays 3 to 2." } });
+        table.Send(new { kind = "bets", bets = Array.Empty<object>() });
+        table.SendPrivate("Asure Namei", new { kind = "bank", balance = 5 });
+        Assert.True(SpinWait.SpinUntil(() => server.Events.Count == 6, Wait));
+
+        server.DropAll();
+        Assert.True(SpinWait.SpinUntil(() => table.FreshRooms == 2, Wait), table.Status);
+        Assert.True(SpinWait.SpinUntil(() => server.Events.Count == 9, Wait));
+        Thread.Sleep(200);
+        var again = server.Events.Skip(6).ToList();
+        Assert.Equal(new[] { "rules", "bets_open", "bets" }, again.Select(e => e.GetProperty("kind").GetString()));
+        Assert.Equal("Blackjack pays 3 to 2.", again[0].GetProperty("lines")[0].GetString());
+    }
+
+    [Fact]
+    public void ARoomThatKeptTheRoundGetsNothingAgain()
+    {
+        using var server = new FakeTableServer { Fresh = [true, false] };
+        using var table = new GambaTable(server.Origin, "tok", Cid, "blackjack");
+        Assert.True(SpinWait.SpinUntil(() => table.Room == "ABC234", Wait));
+        table.Send(new { kind = "bets_open", round = 1, min = 10, max = 100 });
+        Assert.True(SpinWait.SpinUntil(() => server.Events.Count == 1, Wait));
+
+        server.DropAll();
+        Assert.True(SpinWait.SpinUntil(() => server.Hellos.Count == 2, Wait), table.Status);
+        table.Send(new { kind = "say", text = "after the drop" });
+        Assert.True(SpinWait.SpinUntil(() => server.Events.Count == 2, Wait));
+        Thread.Sleep(200);
+        Assert.Equal("say", server.Events.Last().GetProperty("kind").GetString());
+        Assert.Equal(1, table.FreshRooms);
+    }
+
+    [Fact]
+    public void StoppingClosesTheSocketSoTheServerEndsTheTable()
+    {
+        using var server = new FakeTableServer();
+        var table = new GambaTable(server.Origin, "tok", Cid, "blackjack");
+        Assert.True(SpinWait.SpinUntil(() => table.Room == "ABC234", Wait));
+        table.Send(new { kind = "say", text = "last words" });
+        table.Dispose();
+        Assert.True(SpinWait.SpinUntil(() => server.Closed, Wait));
+        Assert.Equal("last words", server.Events.Single().GetProperty("text").GetString());
+    }
+
     /// <summary>Answers every hello with room ABC234 (or the refusal set) and records what arrives.</summary>
     private sealed class FakeTableServer : IDisposable
     {
@@ -95,6 +149,10 @@ public class GambaTableTests
         private readonly Task serving;
 
         public string? Refuse { get; init; }
+        /// <summary>The <c>fresh</c> flag for each hello in turn; past the end, or empty, the reply leaves it out.</summary>
+        public bool[] Fresh { get; init; } = [];
+        /// <summary>A client sent a Close frame.</summary>
+        public bool Closed { get; private set; }
         public ConcurrentQueue<JsonElement> HellosQueue { get; } = new();
         public List<JsonElement> Hellos => HellosQueue.ToList();
         public ConcurrentQueue<JsonElement> EventsQueue { get; } = new();
@@ -150,9 +208,12 @@ public class GambaTableTests
             try
             {
                 HellosQueue.Enqueue(Parse(await Receive(ws)));
-                string reply = Refuse is null
-                    ? JsonSerializer.Serialize(new { type = "room", code = "ABC234", page = $"{Origin}/v/gilded" })
-                    : JsonSerializer.Serialize(new { type = "refused", message = Refuse });
+                int n = HellosQueue.Count - 1;
+                string reply = Refuse is not null
+                    ? JsonSerializer.Serialize(new { type = "refused", message = Refuse })
+                    : n < Fresh.Length
+                        ? JsonSerializer.Serialize(new { type = "room", code = "ABC234", page = $"{Origin}/v/gilded", fresh = Fresh[n] })
+                        : JsonSerializer.Serialize(new { type = "room", code = "ABC234", page = $"{Origin}/v/gilded" });
                 await ws.SendAsync(Encoding.UTF8.GetBytes(reply), WebSocketMessageType.Text, true, stopping.Token);
                 if (Refuse is not null)
                 {
@@ -162,7 +223,12 @@ public class GambaTableTests
                 while (true)
                 {
                     var text = await Receive(ws);
-                    if (text is null) return;
+                    if (text is null)
+                    {
+                        Closed = true;
+                        await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", stopping.Token);
+                        return;
+                    }
                     var e = Parse(text);
                     EventsQueue.Enqueue(e);
                     if (e.GetProperty("kind").GetString() == "link")

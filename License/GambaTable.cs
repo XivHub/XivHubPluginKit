@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.WebSockets;
 using System.Text;
@@ -19,10 +20,19 @@ namespace XivHubPluginKit.License;
 /// BCL only, so it runs (and is tested) outside the game. <see cref="Send"/> may be called from any
 /// thread; events sent while reconnecting wait in a bounded queue and go out in order.
 /// </para>
+/// <para>
+/// The table keeps its own copy of the latest <c>rules</c> and of the round since the last <c>bets_open</c>. When the
+/// server answers with a fresh room (a new code, or the same code after a server restart), that copy goes out first
+/// in place of whatever public events were waiting, so the room holds the whole round again; the dealer plugin only
+/// reopens its players' private streams (<see cref="FreshRooms"/>). <see cref="Dispose"/> closes the socket with a
+/// Close frame, which the server takes as the dealer stopping: the table ends at once.
+/// </para>
 public sealed class GambaTable : IDisposable
 {
     /// <summary>Events held while the socket is down; older ones are dropped past this.</summary>
     private const int MaxQueued = 1000;
+    /// <summary>A round's events rarely pass a hundred; the server bounds its own copy at 500 too.</summary>
+    private const int MaxRound = 500;
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
 
     private readonly Uri endpoint;
@@ -32,7 +42,11 @@ public sealed class GambaTable : IDisposable
     private readonly string helloToken;
     private readonly string cidHash;
     private readonly string game;
-    private readonly ConcurrentQueue<string> outbox = new();
+    // Guards the outbox, the rules and the round together, so a fresh room's resend never interleaves with a Send.
+    private readonly object gate = new();
+    private readonly ConcurrentQueue<(string Json, bool Public)> outbox = new();
+    private readonly List<string> round = new();
+    private string? rules;
     private readonly SemaphoreSlim wake = new(0);
     private readonly CancellationTokenSource stop = new();
     private readonly Task loop;
@@ -51,6 +65,13 @@ public sealed class GambaTable : IDisposable
 
     public string Game => game;
 
+    /// <summary>
+    /// How many fresh rooms the server has given this table. Each one holds no private streams: when this changes,
+    /// treat every player as not watching yet, so the next <see cref="TryTakeWatcher"/> for them starts theirs again.
+    /// </summary>
+    public int FreshRooms => freshRooms;
+    private volatile int freshRooms;
+
     /// <param name="server">The gamba server's https origin, as <see cref="GambaLicense"/> uses it.</param>
     public GambaTable(string server, string token, string cidHash, string game)
     {
@@ -66,9 +87,42 @@ public sealed class GambaTable : IDisposable
     public void Send(object evt)
     {
         if (Refused) return;
-        outbox.Enqueue(JsonSerializer.Serialize(evt));
-        while (outbox.Count > MaxQueued) outbox.TryDequeue(out _);
+        string json = JsonSerializer.Serialize(evt);
+        string kind = KindOf(json);
+        bool isPublic = kind is not ("link" or "private");
+        lock (gate)
+        {
+            if (kind == "rules") rules = json;
+            else if (isPublic)
+            {
+                if (kind == "bets_open") round.Clear();
+                if (round.Count == MaxRound) round.RemoveAt(0);
+                round.Add(json);
+            }
+            outbox.Enqueue((json, isPublic));
+            while (outbox.Count > MaxQueued) outbox.TryDequeue(out _);
+        }
         wake.Release();
+    }
+
+    private static string KindOf(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.TryGetProperty("kind", out var k) ? k.GetString() ?? "" : "";
+    }
+
+    /// <summary>A fresh room holds nothing: the rules and the round go first, then what else was waiting (links, private events).</summary>
+    private void Refill()
+    {
+        lock (gate)
+        {
+            var waiting = new List<(string, bool)>();
+            while (outbox.TryDequeue(out var item))
+                if (!item.Public) waiting.Add(item);
+            if (rules != null) outbox.Enqueue((rules, true));
+            foreach (var e in round) outbox.Enqueue((e, true));
+            foreach (var item in waiting) outbox.Enqueue(item);
+        }
     }
 
     /// <summary>Asks the server for <paramref name="player"/>'s private link; it arrives through <see cref="TryTakeLink"/>.</summary>
@@ -124,6 +178,12 @@ public sealed class GambaTable : IDisposable
                 if (type != "room") throw new InvalidOperationException($"unexpected first reply \"{type}\"");
                 Room = root.GetProperty("code").GetString();
                 Page = root.TryGetProperty("page", out var page) && page.ValueKind == JsonValueKind.String ? page.GetString() : null;
+                // A server that does not say is taken to hold nothing; sending the round again is harmless.
+                if (!root.TryGetProperty("fresh", out var fresh) || fresh.ValueKind != JsonValueKind.False)
+                {
+                    Refill();
+                    freshRooms++;
+                }
                 Status = $"Live as table {Room}.";
                 backoff = TimeSpan.FromSeconds(1);
                 await PumpAsync(ws);
@@ -149,44 +209,40 @@ public sealed class GambaTable : IDisposable
         }
     }
 
-    /// <summary>Sends queued events and reads the server's replies until the socket drops or the table is refused.</summary>
+    /// <summary>
+    /// Sends queued events and reads the server's replies until the socket drops, the table is refused, or the table
+    /// stops; a stop sends what is still queued, then a Close frame.
+    /// </summary>
     private async Task PumpAsync(ClientWebSocket ws)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+        // The reader runs until the socket closes, not until the stop: cancelling a pending receive aborts the socket,
+        // and an aborted socket cannot send its Close.
         var reader = Task.Run(async () =>
         {
-            while (ws.State == WebSocketState.Open)
+            try
             {
-                var text = await ReceiveText(ws, linked.Token);
-                if (text is null) break;
-                using var doc = JsonDocument.Parse(text);
-                var root = doc.RootElement;
-                string type = root.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
-                if (type == "refused")
+                while (ws.State == WebSocketState.Open)
                 {
-                    Refuse(root);
-                    break;
+                    var text = await ReceiveText(ws);
+                    if (text is null) break;
+                    if (!Take(text)) break;
                 }
-                if (type == "link")
-                    links.Enqueue((root.GetProperty("player").GetString() ?? "", root.GetProperty("url").GetString() ?? ""));
-                if (type == "watching")
-                    watchers.Enqueue(root.GetProperty("player").GetString() ?? "");
-                if (type == "act")
-                    actions.Enqueue((root.GetProperty("player").GetString() ?? "", root.GetProperty("action").Clone()));
-                if (type == "error")
-                    Status = $"Live as table {Room}; the server refused an event: {root.GetProperty("message").GetString()}";
             }
-            linked.Cancel();
+            catch (WebSocketException)
+            {
+                // Dropped; the loop reconnects unless the table stopped.
+            }
+            finally
+            {
+                linked.Cancel();
+            }
         });
         try
         {
             while (!linked.IsCancellationRequested)
             {
-                while (outbox.TryPeek(out var next))
-                {
-                    await SendText(ws, next, linked.Token);
-                    outbox.TryDequeue(out _);
-                }
+                await Drain(ws, linked.Token);
                 await wake.WaitAsync(linked.Token);
             }
         }
@@ -194,9 +250,61 @@ public sealed class GambaTable : IDisposable
         {
             // The reader saw the socket close or a refusal.
         }
-        await reader;
+        catch (OperationCanceledException)
+        {
+            // Stopping: the close below.
+        }
         if (stop.IsCancellationRequested && ws.State == WebSocketState.Open)
-            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "table closed", CancellationToken.None);
+        {
+            using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            try
+            {
+                await Drain(ws, grace.Token);
+                await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "dealing stopped", grace.Token);
+            }
+            catch (Exception e) when (e is WebSocketException or OperationCanceledException)
+            {
+                // The server is gone; it will keep the code for its hold time instead.
+            }
+            if (await Task.WhenAny(reader, Task.Delay(TimeSpan.FromSeconds(1))) != reader) ws.Abort();
+        }
+        await reader;
+    }
+
+    private async Task Drain(ClientWebSocket ws, CancellationToken token)
+    {
+        while (outbox.TryPeek(out var next))
+        {
+            await SendText(ws, next.Json, token);
+            outbox.TryDequeue(out _);
+        }
+    }
+
+    /// <summary>Handles one server message; false once the table is refused.</summary>
+    private bool Take(string text)
+    {
+        using var doc = JsonDocument.Parse(text);
+        var root = doc.RootElement;
+        string type = root.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+        switch (type)
+        {
+            case "refused":
+                Refuse(root);
+                return false;
+            case "link":
+                links.Enqueue((root.GetProperty("player").GetString() ?? "", root.GetProperty("url").GetString() ?? ""));
+                break;
+            case "watching":
+                watchers.Enqueue(root.GetProperty("player").GetString() ?? "");
+                break;
+            case "act":
+                actions.Enqueue((root.GetProperty("player").GetString() ?? "", root.GetProperty("action").Clone()));
+                break;
+            case "error":
+                Status = $"Live as table {Room}; the server refused an event: {root.GetProperty("message").GetString()}";
+                break;
+        }
+        return true;
     }
 
     private void Refuse(JsonElement root)
