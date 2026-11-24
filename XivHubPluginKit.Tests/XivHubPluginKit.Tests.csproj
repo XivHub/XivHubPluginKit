@@ -31,6 +31,7 @@
     <Compile Include="..\Retainer\MarketCounts.cs" Link="Retainer\MarketCounts.cs" />
     <Compile Include="..\License\LicenseGrant.cs" Link="License\LicenseGrant.cs" />
     <Compile Include="..\License\GambaTable.cs" Link="License\GambaTable.cs" />
+    <Compile Include="..\License\GambaSave.cs" Link="License\GambaSave.cs" />
   </ItemGroup>
 
 </Project>
