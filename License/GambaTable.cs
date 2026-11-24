@@ -89,7 +89,7 @@ public sealed class GambaTable : IDisposable
         if (Refused) return;
         string json = JsonSerializer.Serialize(evt);
         string kind = KindOf(json);
-        bool isPublic = kind is not ("link" or "private");
+        bool isPublic = kind is not ("link" or "private" or "owed");
         lock (gate)
         {
             if (kind == "rules") rules = json;
