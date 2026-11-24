@@ -36,7 +36,7 @@ public class GambaTableTests
     }
 
     [Fact]
-    public void ALinkRequestComesBackAsTheServersShortLinkAndAWatcherIsAnnounced()
+    public void ALinkRequestComesBackAsTheServersShortLinkAndTheWatchersActionsArrive()
     {
         using var server = new FakeTableServer();
         using var table = new GambaTable(server.Origin, "tok", Cid, "roulette");
@@ -49,6 +49,9 @@ public class GambaTableTests
         string watcher = "";
         Assert.True(SpinWait.SpinUntil(() => table.TryTakeWatcher(out watcher), Wait));
         Assert.Equal("Asure Namei", watcher);
+        (string Player, JsonElement Action) act = default;
+        Assert.True(SpinWait.SpinUntil(() => table.TryTakeAction(out act), Wait));
+        Assert.Equal(("Asure Namei", "hit"), (act.Player, act.Action.GetProperty("move").GetString()));
 
         table.SendPrivate("Asure Namei", new { kind = "bank", balance = 900_000 });
         Assert.True(SpinWait.SpinUntil(() => server.Events.Any(e => e.GetProperty("kind").GetString() == "private"), Wait));
@@ -168,6 +171,7 @@ public class GambaTableTests
                                  {
                                      JsonSerializer.Serialize(new { type = "link", player, url = $"{Origin}/re/SHORT234" }),
                                      JsonSerializer.Serialize(new { type = "watching", player }),
+                                     JsonSerializer.Serialize(new { type = "act", player, action = new { kind = "move", move = "hit" } }),
                                  })
                             await ws.SendAsync(Encoding.UTF8.GetBytes(answer), WebSocketMessageType.Text, true, stopping.Token);
                     }

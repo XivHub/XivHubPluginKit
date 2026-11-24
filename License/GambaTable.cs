@@ -28,6 +28,7 @@ public sealed class GambaTable : IDisposable
     private readonly Uri endpoint;
     private readonly ConcurrentQueue<(string Player, string Url)> links = new();
     private readonly ConcurrentQueue<string> watchers = new();
+    private readonly ConcurrentQueue<(string Player, JsonElement Action)> actions = new();
     private readonly string helloToken;
     private readonly string cidHash;
     private readonly string game;
@@ -78,6 +79,12 @@ public sealed class GambaTable : IDisposable
     /// with <see cref="SendPrivate"/>, then each change.
     /// </summary>
     public bool TryTakeWatcher(out string player) => watchers.TryDequeue(out player!);
+
+    /// <summary>
+    /// Something a player did from their own link (a bet, a move): the server names the player from the link, and
+    /// the action is in gamba-server's closed schema (<c>table/events.rs</c> <c>PlayerAction</c>).
+    /// </summary>
+    public bool TryTakeAction(out (string Player, JsonElement Action) action) => actions.TryDequeue(out action);
 
     /// <summary>One event for <paramref name="player"/>'s private link only (their bank, a journal entry).</summary>
     public void SendPrivate(string player, object evt) => Send(new { kind = "private", player, @event = evt });
@@ -160,6 +167,8 @@ public sealed class GambaTable : IDisposable
                     links.Enqueue((root.GetProperty("player").GetString() ?? "", root.GetProperty("url").GetString() ?? ""));
                 if (type == "watching")
                     watchers.Enqueue(root.GetProperty("player").GetString() ?? "");
+                if (type == "act")
+                    actions.Enqueue((root.GetProperty("player").GetString() ?? "", root.GetProperty("action").Clone()));
                 if (type == "error")
                     Status = $"Live as table {Room}; the server refused an event: {root.GetProperty("message").GetString()}";
             }
