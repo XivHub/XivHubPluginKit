@@ -142,6 +142,15 @@ public sealed class GambaLicense : IDisposable
             ? null
             : new GambaSave(server, token, LicenseIdentity.CidHash(player.ContentId), pluginName);
 
+    /// <summary>
+    /// The customer's saved looks, asked for as the character logged in now, or null when this install has no repo
+    /// token or no character is loaded. Read on the framework thread; the caller disposes it.
+    /// </summary>
+    public GambaLooks? OpenLooks() =>
+        token is null || !player.IsLoaded || player.ContentId == 0
+            ? null
+            : new GambaLooks(server, token, LicenseIdentity.CidHash(player.ContentId), pluginName);
+
     /// <summary>The ContentId hash of the character logged in now, or null; read on the framework thread.</summary>
     public string? CidHash => !player.IsLoaded || player.ContentId == 0 ? null : LicenseIdentity.CidHash(player.ContentId);
 

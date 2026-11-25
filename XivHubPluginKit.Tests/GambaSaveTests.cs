@@ -7,7 +7,7 @@ using XivHubPluginKit.License;
 
 namespace XivHubPluginKit.Tests;
 
-/// <summary><see cref="GambaSave"/> against a fake of <c>gamba-server/src/save_api.rs</c>.</summary>
+/// <summary><see cref="GambaSave"/> and <see cref="GambaLooks"/> against a fake of <c>gamba-server</c>'s <c>save_api.rs</c> and <c>looks_api.rs</c>.</summary>
 public class GambaSaveTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(15);
@@ -52,6 +52,28 @@ public class GambaSaveTests
     }
 
     [Fact]
+    public async Task SavedLooksAreListedAndOneIsWorn()
+    {
+        using var server = new FakeSaveServer();
+        using var looks = new GambaLooks(server.Origin, "tok", Cid, "CrystalTable");
+        var list = await looks.ListAsync();
+        Assert.Equal(new SavedLook(2, "Velvet Hour", "The Velvet Hour", true), list[1]);
+        list = await looks.WearAsync(1);
+        Assert.True(list[0].Worn);
+        Assert.False(list[1].Worn);
+        Assert.Equal(Cid, server.LastWho!.Value.GetProperty("cid_hash").GetString());
+    }
+
+    [Fact]
+    public async Task ALooksRefusalIsShownInTheServersWords()
+    {
+        using var server = new FakeSaveServer { Refuse = "This character has no license." };
+        using var looks = new GambaLooks(server.Origin, "tok", Cid, "CrystalTable");
+        var e = await Assert.ThrowsAsync<GambaLooksException>(() => looks.ListAsync());
+        Assert.Equal("This character has no license.", e.Message);
+    }
+
+    [Fact]
     public void DisposingSendsASaveStillWaiting()
     {
         using var server = new FakeSaveServer();
@@ -64,7 +86,7 @@ public class GambaSaveTests
         Assert.Equal("""{"n":2}""", server.Stored);
     }
 
-    private sealed class FakeSaveServer : IDisposable
+    internal sealed class FakeSaveServer : IDisposable
     {
         private readonly HttpListener listener = new();
         private readonly Task serving;
@@ -127,8 +149,22 @@ public class GambaSaveTests
                 return StoredValue == null
                     ? (404, """{"error":"gamba.xivhub.net holds no save for this character."}""")
                     : (200, $$"""{"saved_at":1700000000,"data":{{StoredValue}}}""");
+            if (method == "POST" && path == "/api/looks")
+                return (200, Looks());
+            if (method == "POST" && path == "/api/looks/wear")
+            {
+                Worn = body.GetProperty("id").GetInt64();
+                return (200, Looks());
+            }
             return (404, "{}");
         }
+
+        /// <summary>The saved look worn, by id.</summary>
+        public long Worn { get; private set; } = 2;
+
+        private string Looks() =>
+            JsonSerializer.Serialize(new[] { (Id: 1L, Name: "Lotus", Venue: ""), (Id: 2L, Name: "Velvet Hour", Venue: "The Velvet Hour") }
+                .Select(l => new { id = l.Id, name = l.Name, venue = l.Venue, worn = l.Id == Worn }));
 
         public void Dispose()
         {

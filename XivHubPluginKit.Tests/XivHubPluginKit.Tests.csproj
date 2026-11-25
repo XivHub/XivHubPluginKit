@@ -32,6 +32,7 @@
     <Compile Include="..\License\LicenseGrant.cs" Link="License\LicenseGrant.cs" />
     <Compile Include="..\License\GambaTable.cs" Link="License\GambaTable.cs" />
     <Compile Include="..\License\GambaSave.cs" Link="License\GambaSave.cs" />
+    <Compile Include="..\License\GambaLooks.cs" Link="License\GambaLooks.cs" />
   </ItemGroup>
 
 </Project>
