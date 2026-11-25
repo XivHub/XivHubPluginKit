@@ -140,6 +140,54 @@ public class GambaTableTests
         Assert.Equal("last words", server.Events.Single().GetProperty("text").GetString());
     }
 
+    [Fact]
+    public void AWebGamesNewsArrivesTypedAndItsAnswersStayOutOfTheRound()
+    {
+        using var server = new FakeTableServer
+        {
+            Fresh = [true, true],
+            Greeting =
+            [
+                """{"type":"buy","sale":"S1","player":"Asure Namei","count":3,"cost":300000}""",
+                """{"type":"won","session":"W1","nonce":2,"player":"Asure Namei","gil":0,"payout":50000,"item":"Plush"}""",
+                """{"type":"ended","player":"Asure Namei","session":null}""",
+            ],
+        };
+        using var table = new GambaTable(server.Origin, "tok", Cid, "scratch");
+        var got = new List<object>();
+        Assert.True(SpinWait.SpinUntil(() =>
+        {
+            while (table.TryTakeWeb(out var m)) got.Add(m);
+            return got.Count == 3;
+        }, Wait));
+        Assert.Equal(new WebBuy("S1", "Asure Namei", 3, 300_000), got[0]);
+        Assert.Equal(new WebWon("W1", 2, "Asure Namei", 0, 50_000, "Plush"), got[1]);
+        Assert.Equal(new WebEnded("Asure Namei", null), got[2]);
+        Assert.False(table.Settling);
+
+        table.Sold("S1");
+        table.Paid("W1", 2);
+        table.End("Asure Namei");
+        Assert.True(SpinWait.SpinUntil(() => server.Events.Count == 3, Wait));
+        Assert.Equal(new[] { "sold", "paid", "end" }, server.Events.Select(e => e.GetProperty("kind").GetString()));
+        // A fresh room gets the round again, never an answer: the server asks again for what it still wants.
+        server.DropAll();
+        Assert.True(SpinWait.SpinUntil(() => table.FreshRooms == 2, Wait), table.Status);
+        Thread.Sleep(300);
+        Assert.Equal(3, server.Events.Count);
+    }
+
+    [Fact]
+    public void ASettlingTableSaysSoAndStopsOnceSettled()
+    {
+        using var server = new FakeTableServer { Settling = true, Greeting = ["""{"type":"settled"}"""] };
+        using var table = new GambaTable(server.Origin, "tok", Cid, "scratch");
+        Assert.True(SpinWait.SpinUntil(() => table.Settled, Wait), table.Status);
+        Assert.True(table.Settling);
+        Thread.Sleep(1500);
+        Assert.Single(server.Hellos);
+    }
+
     /// <summary>Answers every hello with room ABC234 (or the refusal set) and records what arrives.</summary>
     private sealed class FakeTableServer : IDisposable
     {
@@ -149,6 +197,10 @@ public class GambaTableTests
         private readonly Task serving;
 
         public string? Refuse { get; init; }
+        /// <summary>Lines sent right after the room reply, as a web game's server sends what is owed.</summary>
+        public string[] Greeting { get; init; } = [];
+        /// <summary>The room reply says the table only settles.</summary>
+        public bool Settling { get; init; }
         /// <summary>The <c>fresh</c> flag for each hello in turn; past the end, or empty, the reply leaves it out.</summary>
         public bool[] Fresh { get; init; } = [];
         /// <summary>A client sent a Close frame.</summary>
@@ -213,8 +265,11 @@ public class GambaTableTests
                     ? JsonSerializer.Serialize(new { type = "refused", message = Refuse })
                     : n < Fresh.Length
                         ? JsonSerializer.Serialize(new { type = "room", code = "ABC234", page = $"{Origin}/v/gilded", fresh = Fresh[n] })
-                        : JsonSerializer.Serialize(new { type = "room", code = "ABC234", page = $"{Origin}/v/gilded" });
+                        : JsonSerializer.Serialize(new { type = "room", code = "ABC234", page = $"{Origin}/v/gilded", settling = Settling });
                 await ws.SendAsync(Encoding.UTF8.GetBytes(reply), WebSocketMessageType.Text, true, stopping.Token);
+                if (Refuse is null)
+                    foreach (var line in Greeting)
+                        await ws.SendAsync(Encoding.UTF8.GetBytes(line), WebSocketMessageType.Text, true, stopping.Token);
                 if (Refuse is not null)
                 {
                     await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "refused", stopping.Token);

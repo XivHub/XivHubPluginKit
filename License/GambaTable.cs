@@ -10,11 +10,23 @@ using System.Threading.Tasks;
 
 namespace XivHubPluginKit.License;
 
+/// <summary>A web game's purchase: take <see cref="Cost"/> from the player's bank, then answer <see cref="GambaTable.Sold"/> or <see cref="GambaTable.Unsold"/>.</summary>
+public sealed record WebBuy(string Sale, string Player, int Count, long Cost);
+
+/// <summary>
+/// A web game's play that pays: credit <see cref="Gil"/> to the player's bank, or owe them <see cref="Item"/> (worth
+/// <see cref="Payout"/>); then answer <see cref="GambaTable.Paid"/>.
+/// </summary>
+public sealed record WebWon(string Session, long Nonce, string Player, long Gil, long Payout, string? Item);
+
+/// <summary>The player's web game session ended at this plugin's <see cref="GambaTable.End"/>; <see cref="Session"/> null when they had none.</summary>
+public sealed record WebEnded(string Player, string? Session);
+
 /// <summary>
 /// A live table on gamba.xivhub.net: the socket a dealer plugin streams a game's public events into,
 /// and the room code watchers use. The server checks the character's license when the table opens
 /// and every minute after; a refusal ends the table, anything else reconnects with backoff and asks
-/// for the same room code back. Protocol: <c>gamba-server/src/table/mod.rs</c>.
+/// for the same room code back. Protocol: <c>gamba-server/src/table/mod.rs</c>, a web game's in <c>table/web.rs</c>.
 /// </summary>
 /// <para>
 /// BCL only, so it runs (and is tested) outside the game. <see cref="Send"/> may be called from any
@@ -39,6 +51,7 @@ public sealed class GambaTable : IDisposable
     private readonly ConcurrentQueue<(string Player, string Url)> links = new();
     private readonly ConcurrentQueue<string> watchers = new();
     private readonly ConcurrentQueue<(string Player, JsonElement Action)> actions = new();
+    private readonly ConcurrentQueue<object> web = new();
     private readonly string helloToken;
     private readonly string cidHash;
     private readonly string game;
@@ -62,6 +75,15 @@ public sealed class GambaTable : IDisposable
 
     /// <summary>The server refused the table; it stays closed.</summary>
     public bool Refused { get; private set; }
+
+    /// <summary>
+    /// A web game whose license ended while this character still owed players: the table is open only to hear what
+    /// it owes, and sells nothing. Set by the server's answer.
+    /// </summary>
+    public bool Settling { get; private set; }
+
+    /// <summary>A settling table that owes nothing any more; the server closed it and it stays closed.</summary>
+    public bool Settled { get; private set; }
 
     public string Game => game;
 
@@ -89,7 +111,7 @@ public sealed class GambaTable : IDisposable
         if (Refused) return;
         string json = JsonSerializer.Serialize(evt);
         string kind = KindOf(json);
-        bool isPublic = kind is not ("link" or "private" or "owed");
+        bool isPublic = kind is not ("link" or "private" or "owed" or "sold" or "unsold" or "paid" or "end");
         lock (gate)
         {
             if (kind == "rules") rules = json;
@@ -143,6 +165,25 @@ public sealed class GambaTable : IDisposable
     /// </summary>
     public bool TryTakeAction(out (string Player, JsonElement Action) action) => actions.TryDequeue(out action);
 
+    /// <summary>
+    /// A web game's news from the server, oldest first: a <see cref="WebBuy"/>, <see cref="WebWon"/> or
+    /// <see cref="WebEnded"/>. Each buy and payout comes again on every connect until answered, so answer by its
+    /// sale or (session, nonce), never by counting.
+    /// </summary>
+    public bool TryTakeWeb(out object message) => web.TryDequeue(out message!);
+
+    /// <summary>The sale's cost is out of the player's bank.</summary>
+    public void Sold(string sale) => Send(new { kind = "sold", sale });
+
+    /// <summary>The sale was not made; <paramref name="reason"/> is a sentence for the player's page.</summary>
+    public void Unsold(string sale, string reason) => Send(new { kind = "unsold", sale, reason });
+
+    /// <summary>The play's payout is in the bank, or its item owed.</summary>
+    public void Paid(string session, long nonce) => Send(new { kind = "paid", session, nonce });
+
+    /// <summary>Ends the player's open session, revealing what is left; <see cref="WebEnded"/> follows its payouts.</summary>
+    public void End(string player) => Send(new { kind = "end", player });
+
     /// <summary>One event for <paramref name="player"/>'s private link only (their bank, a journal entry).</summary>
     public void SendPrivate(string player, object evt) => Send(new { kind = "private", player, @event = evt });
 
@@ -177,6 +218,7 @@ public sealed class GambaTable : IDisposable
                 }
                 if (type != "room") throw new InvalidOperationException($"unexpected first reply \"{type}\"");
                 Room = root.GetProperty("code").GetString();
+                Settling = root.TryGetProperty("settling", out var settling) && settling.ValueKind == JsonValueKind.True;
                 Page = root.TryGetProperty("page", out var page) && page.ValueKind == JsonValueKind.String ? page.GetString() : null;
                 // A server that does not say is taken to hold nothing; sending the round again is harmless.
                 if (!root.TryGetProperty("fresh", out var fresh) || fresh.ValueKind != JsonValueKind.False)
@@ -184,7 +226,7 @@ public sealed class GambaTable : IDisposable
                     Refill();
                     freshRooms++;
                 }
-                Status = $"Live as table {Room}.";
+                Status = Settling ? "Paying what players are owed; selling nothing." : $"Live as table {Room}.";
                 backoff = TimeSpan.FromSeconds(1);
                 await PumpAsync(ws);
             }
@@ -196,7 +238,7 @@ public sealed class GambaTable : IDisposable
             {
                 Status = $"Live table offline ({e.Message}); retrying.";
             }
-            if (Refused) return;
+            if (Refused || Settled) return;
             try
             {
                 await Task.Delay(backoff, stop.Token);
@@ -300,12 +342,35 @@ public sealed class GambaTable : IDisposable
             case "act":
                 actions.Enqueue((root.GetProperty("player").GetString() ?? "", root.GetProperty("action").Clone()));
                 break;
+            case "buy":
+                web.Enqueue(new WebBuy(Str(root, "sale"), Str(root, "player"), root.GetProperty("count").GetInt32(),
+                    root.GetProperty("cost").GetInt64()));
+                break;
+            case "won":
+                web.Enqueue(new WebWon(Str(root, "session"), root.GetProperty("nonce").GetInt64(), Str(root, "player"),
+                    root.GetProperty("gil").GetInt64(), root.GetProperty("payout").GetInt64(),
+                    root.TryGetProperty("item", out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null));
+                break;
+            case "ended":
+                web.Enqueue(new WebEnded(Str(root, "player"),
+                    root.TryGetProperty("session", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null));
+                break;
+            case "settling":
+                Settling = true;
+                Status = "The license ended: paying what players are owed; selling nothing.";
+                break;
+            case "settled":
+                Settled = true;
+                Status = "Everything owed is paid; the table closed.";
+                return false;
             case "error":
                 Status = $"Live as table {Room}; the server refused an event: {root.GetProperty("message").GetString()}";
                 break;
         }
         return true;
     }
+
+    private static string Str(JsonElement root, string name) => root.GetProperty(name).GetString() ?? "";
 
     private void Refuse(JsonElement root)
     {
