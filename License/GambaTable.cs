@@ -23,6 +23,12 @@ public sealed record WebWon(string Session, long Nonce, string Player, long Gil,
 public sealed record WebEnded(string Player, string? Session);
 
 /// <summary>
+/// The card a web game sells now, as the server's JSON (<see cref="CardJson"/>, the game's own shape), and its return
+/// to player in millionths. Comes when the table connects and whenever the customer changes the card.
+/// </summary>
+public sealed record WebOnSale(string CardJson, long RtpPpm);
+
+/// <summary>
 /// A live table on gamba.xivhub.net: the socket a dealer plugin streams a game's public events into,
 /// and the room code watchers use. The server checks the character's license when the table opens
 /// and every minute after; a refusal ends the table, anything else reconnects with backoff and asks
@@ -166,8 +172,8 @@ public sealed class GambaTable : IDisposable
     public bool TryTakeAction(out (string Player, JsonElement Action) action) => actions.TryDequeue(out action);
 
     /// <summary>
-    /// A web game's news from the server, oldest first: a <see cref="WebBuy"/>, <see cref="WebWon"/> or
-    /// <see cref="WebEnded"/>. Each buy and payout comes again on every connect until answered, so answer by its
+    /// A web game's news from the server, oldest first: a <see cref="WebBuy"/>, <see cref="WebWon"/>,
+    /// <see cref="WebEnded"/> or <see cref="WebOnSale"/>. Each buy and payout comes again on every connect until answered, so answer by its
     /// sale or (session, nonce), never by counting.
     /// </summary>
     public bool TryTakeWeb(out object message) => web.TryDequeue(out message!);
@@ -354,6 +360,9 @@ public sealed class GambaTable : IDisposable
             case "ended":
                 web.Enqueue(new WebEnded(Str(root, "player"),
                     root.TryGetProperty("session", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null));
+                break;
+            case "card":
+                web.Enqueue(new WebOnSale(root.GetProperty("card").GetRawText(), root.GetProperty("rtp_ppm").GetInt64()));
                 break;
             case "settling":
                 Settling = true;

@@ -151,6 +151,7 @@ public class GambaTableTests
                 """{"type":"buy","sale":"S1","player":"Asure Namei","count":3,"cost":300000}""",
                 """{"type":"won","session":"W1","nonce":2,"player":"Asure Namei","gil":0,"payout":50000,"item":"Plush"}""",
                 """{"type":"ended","player":"Asure Namei","session":null}""",
+                """{"type":"card","card":{"name":"Crystal card","price":100000},"rtp_ppm":850000}""",
             ],
         };
         using var table = new GambaTable(server.Origin, "tok", Cid, "scratch");
@@ -158,11 +159,14 @@ public class GambaTableTests
         Assert.True(SpinWait.SpinUntil(() =>
         {
             while (table.TryTakeWeb(out var m)) got.Add(m);
-            return got.Count == 3;
+            return got.Count == 4;
         }, Wait));
         Assert.Equal(new WebBuy("S1", "Asure Namei", 3, 300_000), got[0]);
         Assert.Equal(new WebWon("W1", 2, "Asure Namei", 0, 50_000, "Plush"), got[1]);
         Assert.Equal(new WebEnded("Asure Namei", null), got[2]);
+        var onSale = Assert.IsType<WebOnSale>(got[3]);
+        Assert.Equal(850_000, onSale.RtpPpm);
+        Assert.Equal("Crystal card", JsonDocument.Parse(onSale.CardJson).RootElement.GetProperty("name").GetString());
         Assert.False(table.Settling);
 
         table.Sold("S1");
