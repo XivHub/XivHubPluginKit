@@ -15,9 +15,10 @@ public sealed record WebBuy(string Sale, string Player, int Count, long Cost);
 
 /// <summary>
 /// A web game's play that pays: credit <see cref="Gil"/> to the player's bank, or owe them <see cref="Item"/> (worth
-/// <see cref="Payout"/>); then answer <see cref="GambaTable.Paid"/>.
+/// <see cref="Payout"/>); then answer <see cref="GambaTable.Paid"/>. <see cref="Test"/>: its sale was answered as a
+/// test session's, so it counts in no statistics.
 /// </summary>
-public sealed record WebWon(string Session, long Nonce, string Player, long Gil, long Payout, string? Item);
+public sealed record WebWon(string Session, long Nonce, string Player, long Gil, long Payout, string? Item, bool Test = false);
 
 /// <summary>The player's web game session ended at this plugin's <see cref="GambaTable.End"/>; <see cref="Session"/> null when they had none.</summary>
 public sealed record WebEnded(string Player, string? Session);
@@ -178,8 +179,9 @@ public sealed class GambaTable : IDisposable
     /// </summary>
     public bool TryTakeWeb(out object message) => web.TryDequeue(out message!);
 
-    /// <summary>The sale's cost is out of the player's bank.</summary>
-    public void Sold(string sale) => Send(new { kind = "sold", sale });
+    /// <summary>The sale's cost is out of the player's bank; <paramref name="test"/> when it was sold in a test session,
+    /// which keeps its plays out of every statistic.</summary>
+    public void Sold(string sale, bool test) => Send(new { kind = "sold", sale, test });
 
     /// <summary>The sale was not made; <paramref name="reason"/> is a sentence for the player's page.</summary>
     public void Unsold(string sale, string reason) => Send(new { kind = "unsold", sale, reason });
@@ -355,7 +357,8 @@ public sealed class GambaTable : IDisposable
             case "won":
                 web.Enqueue(new WebWon(Str(root, "session"), root.GetProperty("nonce").GetInt64(), Str(root, "player"),
                     root.GetProperty("gil").GetInt64(), root.GetProperty("payout").GetInt64(),
-                    root.TryGetProperty("item", out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null));
+                    root.TryGetProperty("item", out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null,
+                    root.TryGetProperty("test", out var test) && test.ValueKind == JsonValueKind.True));
                 break;
             case "ended":
                 web.Enqueue(new WebEnded(Str(root, "player"),

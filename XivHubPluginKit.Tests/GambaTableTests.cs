@@ -149,7 +149,7 @@ public class GambaTableTests
             Greeting =
             [
                 """{"type":"buy","sale":"S1","player":"Asure Namei","count":3,"cost":300000}""",
-                """{"type":"won","session":"W1","nonce":2,"player":"Asure Namei","gil":0,"payout":50000,"item":"Plush"}""",
+                """{"type":"won","session":"W1","nonce":2,"player":"Asure Namei","gil":0,"payout":50000,"item":"Plush","test":true}""",
                 """{"type":"ended","player":"Asure Namei","session":null}""",
                 """{"type":"card","card":{"name":"Crystal card","price":100000},"rtp_ppm":850000}""",
             ],
@@ -162,18 +162,19 @@ public class GambaTableTests
             return got.Count == 4;
         }, Wait));
         Assert.Equal(new WebBuy("S1", "Asure Namei", 3, 300_000), got[0]);
-        Assert.Equal(new WebWon("W1", 2, "Asure Namei", 0, 50_000, "Plush"), got[1]);
+        Assert.Equal(new WebWon("W1", 2, "Asure Namei", 0, 50_000, "Plush", Test: true), got[1]);
         Assert.Equal(new WebEnded("Asure Namei", null), got[2]);
         var onSale = Assert.IsType<WebOnSale>(got[3]);
         Assert.Equal(850_000, onSale.RtpPpm);
         Assert.Equal("Crystal card", JsonDocument.Parse(onSale.CardJson).RootElement.GetProperty("name").GetString());
         Assert.False(table.Settling);
 
-        table.Sold("S1");
+        table.Sold("S1", true);
         table.Paid("W1", 2);
         table.End("Asure Namei");
         Assert.True(SpinWait.SpinUntil(() => server.Events.Count == 3, Wait));
         Assert.Equal(new[] { "sold", "paid", "end" }, server.Events.Select(e => e.GetProperty("kind").GetString()));
+        Assert.True(server.Events[0].GetProperty("test").GetBoolean());
         // A fresh room gets the round again, never an answer: the server asks again for what it still wants.
         server.DropAll();
         Assert.True(SpinWait.SpinUntil(() => table.FreshRooms == 2, Wait), table.Status);
