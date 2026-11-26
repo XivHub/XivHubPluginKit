@@ -287,6 +287,40 @@ every `BoardReader` method from the framework thread (a window draw or a framewo
 plugin has its own `BoardSearch`, but the board window is shared, so two plugins searching at once
 fight over it.
 
+### Buying on the board
+
+`Board/Buying/BoardBuyer` buys one world's lines on the open board, one whole listing at a time:
+at or under each line's plan price it buys, within the host's ask threshold it asks the owner (or
+skips, under `AskPolicy.SkipAbove`), and past it skips. It checks the listing's slot at the frame
+of Yes, keeps the gil reserve and bag room, and stops on anything its recordings don't show, with
+a `boardbuy-unrecognised` devlog record.
+
+```csharp
+// after ECommonsMain.Init and KitServices.Init, and after BoardSearch
+BoardBuyer = new BoardBuyer(Framework, ChatGui, ToastGui, PlayerState, Log, new MyBuyHost());
+
+// one world's lines; Hq null takes either quality
+var stop = new BuyStop(worldId, [new BuyLine(itemId, name, Hq: true, IsCrystal: false, Units: 12,
+    PlanGil: PlanPrice.AtUnit(unitGil, 12).Gil, n => PlanPrice.AtUnit(unitGil, n), Kind: "Mat")]);
+if (BoardBuyer.Guard(stop) is null) BoardBuyer.Start(stop, AskPolicy.Ask);
+
+// Dispose(), before BoardSearch:
+BoardBuyer.Dispose();
+```
+
+`IBoardBuyHost` supplies the settings (reserve, `BuyThresholds`, click delay, `Humanizer` range),
+the plugin's `BoardSearch`, its own-retainer ids, whether another automation runs, and
+`LineClosed`, which drops a line the plugin no longer wants mid-run. `PendingAsk` and
+`Answer(bool)` carry an ask; `Result`, `Skipped`, `BoughtUnits` and `Spent` the outcome.
+
+| File | Holds | Needs |
+| --- | --- | --- |
+| `MarketItem.cs`, `BoardQuote.cs` | `Listing`, `MarketItem`, and `BoardQuoter`: the cheapest whole-listing cover of n units with the game's fee | nothing (BCL only) |
+| `LiveBoard.cs`, `BoardCompare.cs` | the cover over a live read, of one quality or either, and its comparison with the line's plan | `BoardModels` |
+| `BuyModels.cs`, `BuyGuard.cs` | `BuyLine`, `BuyStop`, `PlanPrice`, `AskPolicy`; the buy, ask or skip verdict, the stop budget and the reserve check | `BoardModels` |
+| `ListingSlot.cs`, `PurchaseText.cs` | which slot Yes buys; the purchase prompt and log line parsers | `BoardModels` |
+| `BoardBuyer.cs` | the run, `IBoardBuyHost`, `BuyAsk` | ECommons, `KitServices`, `DevTelemetry`, `BoardReader`, `BoardSearch`, `Inventory/MainBags`, `Inventory/ItemSheet`, `Shop/Humanizer`, and every file above |
+
 The live-price lookup reads the board from the packets the game receives rather than from its
 windows:
 

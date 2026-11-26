@@ -23,6 +23,14 @@
     <Compile Include="..\Board\BoardModels.cs" Link="Board\BoardModels.cs" />
     <Compile Include="..\Board\ListingsGate.cs" Link="Board\ListingsGate.cs" />
     <Compile Include="..\Board\BoardObservation.cs" Link="Board\BoardObservation.cs" />
+    <Compile Include="..\Board\Buying\MarketItem.cs" Link="Board\Buying\MarketItem.cs" />
+    <Compile Include="..\Board\Buying\BoardQuote.cs" Link="Board\Buying\BoardQuote.cs" />
+    <Compile Include="..\Board\Buying\LiveBoard.cs" Link="Board\Buying\LiveBoard.cs" />
+    <Compile Include="..\Board\Buying\BoardCompare.cs" Link="Board\Buying\BoardCompare.cs" />
+    <Compile Include="..\Board\Buying\BuyModels.cs" Link="Board\Buying\BuyModels.cs" />
+    <Compile Include="..\Board\Buying\BuyGuard.cs" Link="Board\Buying\BuyGuard.cs" />
+    <Compile Include="..\Board\Buying\ListingSlot.cs" Link="Board\Buying\ListingSlot.cs" />
+    <Compile Include="..\Board\Buying\PurchaseText.cs" Link="Board\Buying\PurchaseText.cs" />
     <Compile Include="..\Retainer\RetainerMarketRow.cs" Link="Retainer\RetainerMarketRow.cs" />
     <Compile Include="..\Pinch\PinchModels.cs" Link="Pinch\PinchModels.cs" />
     <Compile Include="..\Pinch\PinchDecision.cs" Link="Pinch\PinchDecision.cs" />
