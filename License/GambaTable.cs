@@ -30,6 +30,17 @@ public sealed record WebEnded(string Player, string? Session);
 public sealed record WebOnSale(string CardJson, long RtpPpm);
 
 /// <summary>
+/// The dealer's latest coin pusher machine as the server holds it, sent on connect and after every change.
+/// <see cref="State"/>: <c>none</c>, <c>filling</c> (opened, its coins being laid), <c>open</c>, <c>closing</c> (no
+/// new drops; its line plays out) or <c>closed</c>. Counts are in coins: the <see cref="Float"/> it was filled with
+/// (null while filling), what players <see cref="Dropped"/>, what it <see cref="Paid"/> them, what the
+/// <see cref="Guttered"/> sides kept, what the bonus <see cref="Rained"/>, and what was <see cref="Left"/> on it once
+/// closed. <see cref="Bonus"/>: it has the bonus marker.
+/// </summary>
+public sealed record PusherStatus(string State, string? Machine, long Price, int PerTurn, int ReturnPct, long? Float,
+    long Turns, long Dropped, long Paid, long Guttered, long? Left, bool Bonus, long Rained);
+
+/// <summary>
 /// A live table on gamba.xivhub.net: the socket a dealer plugin streams a game's public events into,
 /// and the room code watchers use. The server checks the character's license when the table opens
 /// and every minute after; a refusal ends the table, anything else reconnects with backoff and asks
@@ -118,7 +129,7 @@ public sealed class GambaTable : IDisposable
         if (Refused) return;
         string json = JsonSerializer.Serialize(evt);
         string kind = KindOf(json);
-        bool isPublic = kind is not ("link" or "private" or "owed" or "sold" or "unsold" or "paid" or "end");
+        bool isPublic = kind is not ("link" or "private" or "owed" or "sold" or "unsold" or "paid" or "end" or "pusher_open" or "pusher_close");
         lock (gate)
         {
             if (kind == "rules") rules = json;
@@ -174,7 +185,7 @@ public sealed class GambaTable : IDisposable
 
     /// <summary>
     /// A web game's news from the server, oldest first: a <see cref="WebBuy"/>, <see cref="WebWon"/>,
-    /// <see cref="WebEnded"/> or <see cref="WebOnSale"/>. Each buy and payout comes again on every connect until answered, so answer by its
+    /// <see cref="WebEnded"/>, <see cref="WebOnSale"/> or <see cref="PusherStatus"/>. Each buy and payout comes again on every connect until answered, so answer by its
     /// sale or (session, nonce), never by counting.
     /// </summary>
     public bool TryTakeWeb(out object message) => web.TryDequeue(out message!);
@@ -191,6 +202,12 @@ public sealed class GambaTable : IDisposable
 
     /// <summary>Ends the player's open session, revealing what is left; <see cref="WebEnded"/> follows its payouts.</summary>
     public void End(string player) => Send(new { kind = "end", player });
+
+    /// <summary>Opens this character's coin pusher machine, or does nothing when one is open; a <see cref="PusherStatus"/> follows.</summary>
+    public void PusherOpen() => Send(new { kind = "pusher_open" });
+
+    /// <summary>The machine takes no more drops and closes once its line has played; a <see cref="PusherStatus"/> follows each step.</summary>
+    public void PusherClose() => Send(new { kind = "pusher_close" });
 
     /// <summary>One event for <paramref name="player"/>'s private link only (their bank, a journal entry).</summary>
     public void SendPrivate(string player, object evt) => Send(new { kind = "private", player, @event = evt });
@@ -367,6 +384,9 @@ public sealed class GambaTable : IDisposable
             case "card":
                 web.Enqueue(new WebOnSale(root.GetProperty("card").GetRawText(), root.GetProperty("rtp_ppm").GetInt64()));
                 break;
+            case "pusher":
+                web.Enqueue(Pusher(root));
+                break;
             case "settling":
                 Settling = true;
                 Status = "The license ended: paying what players are owed; selling nothing.";
@@ -383,6 +403,17 @@ public sealed class GambaTable : IDisposable
     }
 
     private static string Str(JsonElement root, string name) => root.GetProperty(name).GetString() ?? "";
+
+    private static PusherStatus Pusher(JsonElement root)
+    {
+        long Num(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+        long? Maybe(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : null;
+        return new PusherStatus(Str(root, "state"),
+            root.TryGetProperty("machine", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null,
+            Num("price"), (int)Num("per_turn"), (int)Num("return_pct"), Maybe("float"), Num("turns"), Num("dropped"),
+            Num("paid"), Num("guttered"), Maybe("left"), root.TryGetProperty("bonus", out var b) && b.ValueKind == JsonValueKind.True,
+            Num("rained"));
+    }
 
     private void Refuse(JsonElement root)
     {
