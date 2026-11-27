@@ -30,6 +30,12 @@ public sealed record WebEnded(string Player, string? Session);
 public sealed record WebOnSale(string CardJson, long RtpPpm);
 
 /// <summary>
+/// The slot machine a web game spins now: the bets its players pick from, and its return to player in millionths.
+/// Comes when the table connects and whenever the customer changes the machine.
+/// </summary>
+public sealed record WebMachine(IReadOnlyList<long> Bets, long RtpPpm);
+
+/// <summary>
 /// The dealer's latest coin pusher machine as the server holds it, sent on connect and after every change.
 /// <see cref="State"/>: <c>none</c>, <c>filling</c> (opened, its coins being laid), <c>open</c>, <c>closing</c> (no
 /// new drops; its line plays out) or <c>closed</c>. Counts are in coins: the <see cref="Float"/> it was filled with
@@ -188,7 +194,7 @@ public sealed class GambaTable : IDisposable
 
     /// <summary>
     /// A web game's news from the server, oldest first: a <see cref="WebBuy"/>, <see cref="WebWon"/>,
-    /// <see cref="WebEnded"/>, <see cref="WebOnSale"/> or <see cref="PusherStatus"/>. Each buy and payout comes again on every connect until answered, so answer by its
+    /// <see cref="WebEnded"/>, <see cref="WebOnSale"/>, <see cref="WebMachine"/> or <see cref="PusherStatus"/>. Each buy and payout comes again on every connect until answered, so answer by its
     /// sale or (session, nonce), never by counting.
     /// </summary>
     public bool TryTakeWeb(out object message) => web.TryDequeue(out message!);
@@ -387,6 +393,10 @@ public sealed class GambaTable : IDisposable
                 break;
             case "card":
                 web.Enqueue(new WebOnSale(root.GetProperty("card").GetRawText(), root.GetProperty("rtp_ppm").GetInt64()));
+                break;
+            case "machine":
+                web.Enqueue(new WebMachine(root.GetProperty("bets").EnumerateArray().Select(b => b.GetInt64()).ToList(),
+                    root.GetProperty("rtp_ppm").GetInt64()));
                 break;
             case "pusher":
                 web.Enqueue(Pusher(root));
