@@ -88,6 +88,9 @@ public sealed class GambaTable : IDisposable
     /// <summary>The customer's public page (their name, schedule and open tables), when they have one.</summary>
     public string? Page { get; private set; }
 
+    /// <summary>The address where anyone watches this table, once the server gave one.</summary>
+    public string? Watch { get; private set; }
+
     /// <summary>Where the table stands, in words for the dealer.</summary>
     public string Status { get; private set; } = "Connecting to the live table.";
 
@@ -245,6 +248,7 @@ public sealed class GambaTable : IDisposable
                 Room = root.GetProperty("code").GetString();
                 Settling = root.TryGetProperty("settling", out var settling) && settling.ValueKind == JsonValueKind.True;
                 Page = root.TryGetProperty("page", out var page) && page.ValueKind == JsonValueKind.String ? page.GetString() : null;
+                Watch = root.TryGetProperty("watch", out var watch) && watch.ValueKind == JsonValueKind.String ? watch.GetString() : null;
                 // A server that does not say is taken to hold nothing; sending the round again is harmless.
                 if (!root.TryGetProperty("fresh", out var fresh) || fresh.ValueKind != JsonValueKind.False)
                 {
