@@ -49,6 +49,9 @@ public static unsafe class HouseAddresses
         if (!data.GetExcelSheet<TerritoryType>().TryGetRow(territory, out var t)) return null;
         string district = t.PlaceName.ValueNullable?.Name.ExtractText() ?? "";
         if (district.Length == 0) return null;
-        return new HouseAddress(w.Name.ExtractText(), w.DataCenter.ValueNullable?.Name.ExtractText() ?? "", district, ward, plot, room, apartment);
+        // World.DataCenter names one data centre for a whole region (Chaos for every European world, Aether for every
+        // North American one). The world's own is the byte after it, which the sheet's schema leaves unnamed.
+        string dataCenter = data.GetExcelSheet<WorldDCGroupType>().TryGetRow(w.Unknown0, out var dc) ? dc.Name.ExtractText() : "";
+        return new HouseAddress(w.Name.ExtractText(), dataCenter, district, ward, plot, room, apartment);
     }
 }

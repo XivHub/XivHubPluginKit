@@ -23,6 +23,9 @@ public sealed record WebWon(string Session, long Nonce, string Player, long Gil,
 /// <summary>The player's web game session ended at this plugin's <see cref="GambaTable.End"/>; <see cref="Session"/> null when they had none.</summary>
 public sealed record WebEnded(string Player, string? Session);
 
+/// <summary>The cards a scratch player has bought and not scratched. Comes whenever the count changes, and for every open session when the table connects.</summary>
+public sealed record WebHolding(string Player, int Left);
+
 /// <summary>
 /// The card a web game sells now, as the server's JSON (<see cref="CardJson"/>, the game's own shape), and its return
 /// to player in millionths. Comes when the table connects and whenever the customer changes the card.
@@ -390,6 +393,9 @@ public sealed class GambaTable : IDisposable
             case "ended":
                 web.Enqueue(new WebEnded(Str(root, "player"),
                     root.TryGetProperty("session", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null));
+                break;
+            case "holding":
+                web.Enqueue(new WebHolding(Str(root, "player"), root.GetProperty("left").GetInt32()));
                 break;
             case "card":
                 web.Enqueue(new WebOnSale(root.GetProperty("card").GetRawText(), root.GetProperty("rtp_ppm").GetInt64()));
